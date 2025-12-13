@@ -65,7 +65,10 @@ class PDFGeneratorAgent:
         sop_data: Dict[str, Any],
         explanations: List[Dict[str, Any]],
         qa_result: Dict[str, Any],
-        all_components: List[Dict[str, Any]] = None
+        all_components: List[Dict[str, Any]] = None,
+        all_sop_data: List[Dict[str, Any]] = None,
+        all_explanations: List[Dict[str, Any]] = None,
+        all_qa_results: List[Dict[str, Any]] = None
     ) -> str:
         """Generate complete SOP PDF report"""
         doc = SimpleDocTemplate(output_path, pagesize=letter)
@@ -92,17 +95,51 @@ class PDFGeneratorAgent:
             story.extend(self._create_all_components_section(all_components))
             story.append(Spacer(1, 0.2*inch))
         
-        # Detected Component Section
-        story.extend(self._create_component_section(target_component))
-        story.append(Spacer(1, 0.2*inch))
-        
-        # SOP Steps Section
-        story.extend(self._create_sop_section(sop_data))
-        story.append(Spacer(1, 0.2*inch))
-        
-        # Detailed Explanations Section
-        story.extend(self._create_explanations_section(explanations))
-        story.append(Spacer(1, 0.2*inch))
+        # Generate SOPs for ALL components
+        if all_sop_data and len(all_sop_data) > 1:
+            story.append(Paragraph("ALL DETECTED CONNECTORS AND THEIR INSTALLATION PROCEDURES", self.styles['SectionHeader']))
+            story.append(Spacer(1, 0.2*inch))
+            
+            for idx, sop_item in enumerate(all_sop_data, 1):
+                component = sop_item.get("component", {})
+                component_sop_data = sop_item.get("sop_data", {})
+                component_explanations = all_explanations[idx-1].get("explanations", []) if all_explanations and idx <= len(all_explanations) else []
+                component_qa = all_qa_results[idx-1].get("qa_result", {}) if all_qa_results and idx <= len(all_qa_results) else {}
+                
+                # Component header
+                story.append(Paragraph(f"<b>Connector {idx}: {component.get('name', 'Unknown')}</b>", self.styles['Heading2']))
+                story.append(Spacer(1, 0.1*inch))
+                
+                # Component details
+                story.extend(self._create_component_section(component))
+                story.append(Spacer(1, 0.1*inch))
+                
+                # SOP Steps
+                story.extend(self._create_sop_section(component_sop_data))
+                story.append(Spacer(1, 0.1*inch))
+                
+                # Explanations
+                if component_explanations:
+                    story.extend(self._create_explanations_section(component_explanations))
+                    story.append(Spacer(1, 0.1*inch))
+                
+                # QA Result
+                if component_qa:
+                    story.extend(self._create_qa_section(component_qa))
+                
+                story.append(PageBreak())
+        else:
+            # Single component (backward compatibility)
+            story.extend(self._create_component_section(target_component))
+            story.append(Spacer(1, 0.2*inch))
+            
+            # SOP Steps Section
+            story.extend(self._create_sop_section(sop_data))
+            story.append(Spacer(1, 0.2*inch))
+            
+            # Detailed Explanations Section
+            story.extend(self._create_explanations_section(explanations))
+            story.append(Spacer(1, 0.2*inch))
         
         # Safety Notes Section
         story.extend(self._create_safety_section(target_component, qa_result))
@@ -319,6 +356,31 @@ class PDFGeneratorAgent:
                     self.styles['ExplanationText']
                 ))
             elements.append(Spacer(1, 0.15*inch))
+        
+        return elements
+    
+    def _create_qa_section(self, qa_result: Dict[str, Any]) -> List:
+        """Create QA validation section"""
+        elements = []
+        elements.append(Paragraph("<b>QA Validation:</b>", self.styles['Normal']))
+        
+        qa_status = qa_result.get('status', 'Unknown')
+        safety_score = qa_result.get('safety_score', 0)
+        warnings = qa_result.get('warnings', [])
+        recommendations = qa_result.get('recommendations', [])
+        
+        elements.append(Paragraph(f"Status: {qa_status}", self.styles['Normal']))
+        elements.append(Paragraph(f"Safety Score: {safety_score:.1f}/100", self.styles['Normal']))
+        
+        if warnings:
+            elements.append(Paragraph("<b>Warnings:</b>", self.styles['Normal']))
+            for warning in warnings:
+                elements.append(Paragraph(f"⚠ {warning}", self.styles['Normal']))
+        
+        if recommendations:
+            elements.append(Paragraph("<b>Recommendations:</b>", self.styles['Normal']))
+            for rec in recommendations:
+                elements.append(Paragraph(f"• {rec}", self.styles['Normal']))
         
         return elements
     

@@ -48,6 +48,102 @@
             padding: 40px;
         }
 
+        .status-section {
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            border-radius: 10px;
+            padding: 25px;
+            margin-bottom: 30px;
+            border: 2px solid #667eea;
+        }
+
+        .status-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .status-badge {
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-weight: 600;
+            font-size: 14px;
+        }
+
+        .status-badge.healthy {
+            background: #4caf50;
+            color: white;
+        }
+
+        .status-badge.degraded {
+            background: #ff9800;
+            color: white;
+        }
+
+        .status-badge.error {
+            background: #f44336;
+            color: white;
+        }
+
+        .agent-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+
+        .agent-card {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            border-left: 4px solid #667eea;
+        }
+
+        .agent-card.healthy {
+            border-left-color: #4caf50;
+        }
+
+        .agent-card.error {
+            border-left-color: #f44336;
+        }
+
+        .agent-name {
+            font-weight: 600;
+            color: #1a237e;
+            margin-bottom: 8px;
+        }
+
+        .model-info {
+            background: #e3f2fd;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 15px;
+        }
+
+        .model-item {
+            padding: 8px 0;
+            border-bottom: 1px solid #ddd;
+        }
+
+        .model-item:last-child {
+            border-bottom: none;
+        }
+
+        .refresh-btn {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        .refresh-btn:hover {
+            background: #5568d3;
+        }
+
         .upload-section {
             background: #f5f5f5;
             border-radius: 10px;
@@ -270,8 +366,19 @@
             <p>AI-Powered Standard Operating Procedure Generator</p>
         </div>
 
-        <div class="content">
-            <div class="upload-section">
+            <div class="content">
+                <!-- System Status Section -->
+                <div class="status-section" id="statusSection">
+                    <div class="status-header">
+                        <h2 style="color: #1a237e; margin: 0;">🔍 System Status & Agent Health</h2>
+                        <button class="refresh-btn" onclick="loadSystemStatus()">🔄 Refresh Status</button>
+                    </div>
+                    <div id="statusContent">
+                        <p style="text-align: center; color: #666;">Loading system status...</p>
+                    </div>
+                </div>
+
+                <div class="upload-section">
                 <form id="sopForm">
                     <div class="form-group">
                         <label for="imageUpload">Upload Motherboard Image</label>
@@ -309,12 +416,17 @@
                 </div>
                 
                 <div class="result-section">
-                    <h2>📋 Target Component (For SOP)</h2>
+                    <h2>📋 All Connectors with Installation Procedures</h2>
+                    <div id="allConnectorsWithSOPs"></div>
+                </div>
+
+                <div class="result-section">
+                    <h2>📋 Primary Component Details</h2>
                     <div class="component-info" id="componentInfo"></div>
                 </div>
 
                 <div class="result-section">
-                    <h2>📝 SOP Steps</h2>
+                    <h2>📝 Primary SOP Steps</h2>
                     <ol class="sop-steps" id="sopSteps"></ol>
                 </div>
 
@@ -336,6 +448,129 @@
     <script>
         const BACKEND_URL = 'http://localhost:8001';
         let currentPdfPath = '';
+
+        // Load system status on page load
+        window.addEventListener('DOMContentLoaded', () => {
+            loadSystemStatus();
+            // Refresh status every 30 seconds
+            setInterval(loadSystemStatus, 30000);
+        });
+
+        async function loadSystemStatus() {
+            const statusContent = document.getElementById('statusContent');
+            if (!statusContent) return;
+            
+            statusContent.innerHTML = '<p style="text-align: center; color: #666;">Loading system status...</p>';
+
+            try {
+                const response = await fetch(`${BACKEND_URL}/api/status`);
+                const data = await response.json();
+
+                let html = '';
+
+                // Overall Health
+                const overallHealth = data.overall?.health || 'unknown';
+                const healthPercentage = data.overall?.health_percentage || 0;
+                const healthyAgents = data.overall?.healthy_agents || 0;
+                const totalAgents = data.overall?.total_agents || 0;
+
+                html += `<div style="background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px;">`;
+                html += `<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">`;
+                html += `<h3 style="margin: 0; color: #1a237e;">Overall System Health</h3>`;
+                html += `<span class="status-badge ${overallHealth}">${overallHealth.toUpperCase()}</span>`;
+                html += `</div>`;
+                html += `<div style="background: #f5f5f5; padding: 15px; border-radius: 5px;">`;
+                html += `<p style="margin: 5px 0;"><strong>Health Score:</strong> ${healthPercentage}%</p>`;
+                html += `<p style="margin: 5px 0;"><strong>Healthy Agents:</strong> ${healthyAgents}/${totalAgents}</p>`;
+                html += `<p style="margin: 5px 0;"><strong>Backend Status:</strong> <span style="color: #4caf50;">${data.backend?.status || 'Unknown'}</span></p>`;
+                html += `<p style="margin: 5px 0;"><strong>Backend Version:</strong> ${data.backend?.version || 'N/A'}</p>`;
+                html += `</div></div>`;
+
+                // Agents Status
+                html += `<h3 style="color: #1a237e; margin-top: 20px; margin-bottom: 15px;">🤖 Agent Status</h3>`;
+                html += `<div class="agent-grid">`;
+
+                const agents = data.agents || {};
+                for (const [agentName, agentData] of Object.entries(agents)) {
+                    const agentStatus = agentData.status || 'unknown';
+                    const displayName = agentName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                    
+                    html += `<div class="agent-card ${agentStatus}">`;
+                    html += `<div class="agent-name">${displayName}</div>`;
+                    html += `<div style="margin-bottom: 8px;"><span class="status-badge ${agentStatus}">${agentStatus.toUpperCase()}</span></div>`;
+                    
+                    if (agentData.capabilities) {
+                        html += `<div style="font-size: 12px; color: #666; margin-top: 8px;">`;
+                        html += `<strong>Capabilities:</strong><br>`;
+                        agentData.capabilities.forEach(cap => {
+                            html += `• ${cap}<br>`;
+                        });
+                        html += `</div>`;
+                    }
+
+                    if (agentData.model_name) {
+                        html += `<div style="font-size: 12px; color: #667eea; margin-top: 8px;"><strong>Model:</strong> ${agentData.model_name}</div>`;
+                    }
+
+                    if (agentData.device) {
+                        html += `<div style="font-size: 12px; color: #666; margin-top: 4px;"><strong>Device:</strong> ${agentData.device}</div>`;
+                    }
+
+                    if (agentData.error) {
+                        html += `<div style="font-size: 11px; color: #f44336; margin-top: 8px;"><strong>Error:</strong> ${agentData.error}</div>`;
+                    }
+
+                    html += `</div>`;
+                }
+
+                html += `</div>`;
+
+                // Models Information
+                html += `<h3 style="color: #1a237e; margin-top: 30px; margin-bottom: 15px;">🧠 AI Models</h3>`;
+                html += `<div class="model-info">`;
+
+                const models = data.models || {};
+                for (const [modelKey, modelData] of Object.entries(models)) {
+                    const displayName = modelKey.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                    html += `<div class="model-item">`;
+                    html += `<div style="font-weight: 600; color: #1a237e; margin-bottom: 5px;">${displayName}</div>`;
+                    html += `<div style="font-size: 13px; color: #666;">`;
+                    html += `<strong>Name:</strong> ${modelData.name || 'N/A'}<br>`;
+                    html += `<strong>Provider:</strong> ${modelData.provider || 'N/A'}<br>`;
+                    html += `<strong>Type:</strong> ${modelData.type || 'N/A'}<br>`;
+                    if (modelData.architecture) {
+                        html += `<strong>Architecture:</strong> ${modelData.architecture}<br>`;
+                    }
+                    html += `<strong>Status:</strong> <span style="color: ${modelData.status === 'configured' ? '#4caf50' : '#ff9800'}">${modelData.status || 'Unknown'}</span>`;
+                    if (modelData.api_key_configured !== undefined) {
+                        html += `<br><strong>API Key:</strong> <span style="color: ${modelData.api_key_configured ? '#4caf50' : '#f44336'}">${modelData.api_key_configured ? 'Configured' : 'Not Configured'}</span>`;
+                    }
+                    html += `</div>`;
+                    html += `</div>`;
+                }
+
+                html += `</div>`;
+
+                // System Information
+                html += `<h3 style="color: #1a237e; margin-top: 30px; margin-bottom: 15px;">💻 System Information</h3>`;
+                html += `<div style="background: white; padding: 15px; border-radius: 8px;">`;
+                const system = data.system || {};
+                html += `<p style="margin: 5px 0;"><strong>Device:</strong> ${system.device || 'N/A'}</p>`;
+                html += `<p style="margin: 5px 0;"><strong>CUDA Available:</strong> <span style="color: ${system.cuda_available ? '#4caf50' : '#666'}">${system.cuda_available ? 'Yes' : 'No'}</span></p>`;
+                html += `<p style="margin: 5px 0;"><strong>PyTorch Available:</strong> <span style="color: ${system.pytorch_available ? '#4caf50' : '#666'}">${system.pytorch_available ? 'Yes' : 'No'}</span></p>`;
+                html += `</div>`;
+
+                statusContent.innerHTML = html;
+
+            } catch (error) {
+                statusContent.innerHTML = `
+                    <div style="background: #ffebee; padding: 15px; border-radius: 8px; color: #c62828;">
+                        <strong>Error loading system status:</strong> ${error.message}<br>
+                        <small>Make sure the backend server is running on port 8001</small>
+                    </div>
+                `;
+            }
+        }
 
         document.getElementById('sopForm').addEventListener('submit', async (e) => {
             e.preventDefault();
@@ -387,7 +622,7 @@
                 taskName.textContent = data.task || 'Unknown Task';
             }
             
-            // Display all connectors
+            // Display all connectors list
             const allConnectors = data.all_connectors || [];
             const connectorsDiv = document.getElementById('allConnectors');
             if (connectorsDiv && allConnectors.length > 0) {
@@ -417,6 +652,83 @@
                 connectorsDiv.innerHTML = connectorsHTML;
             } else if (connectorsDiv) {
                 connectorsDiv.innerHTML = '<p style="color: #666;">No connectors detected</p>';
+            }
+            
+            // Display all connectors with their SOPs - Sequential Installation Guide
+            const allConnectorsWithSOPsDiv = document.getElementById('allConnectorsWithSOPs');
+            const allConnectorsWithSOPs = data.all_connectors_with_sops || [];
+            if (allConnectorsWithSOPsDiv && allConnectorsWithSOPs.length > 0) {
+                let sopsHTML = '<div style="background: #e8f5e9; padding: 20px; border-radius: 10px; margin-bottom: 20px; border-left: 5px solid #4caf50;">';
+                sopsHTML += '<h2 style="color: #1a237e; margin-bottom: 10px;">📋 Complete Installation Sequence</h2>';
+                sopsHTML += `<p style="font-size: 16px; color: #2e7d32;"><strong>Total Connectors to Install: ${allConnectorsWithSOPs.length}</strong></p>`;
+                sopsHTML += '<p style="color: #666;">Follow these steps in order to install all components on the motherboard:</p>';
+                sopsHTML += '</div>';
+                
+                allConnectorsWithSOPs.forEach((item, idx) => {
+                    const component = item.component || {};
+                    const sopSteps = item.sop_steps || [];
+                    const explanations = item.explanations || [];
+                    const qaResult = item.qa_result || {};
+                    const locationDesc = component.location_description || component.typical_location || '';
+                    
+                    sopsHTML += `<div style="background: white; border: 2px solid #667eea; border-radius: 10px; padding: 20px; margin-bottom: 30px; box-shadow: 0 4px 10px rgba(0,0,0,0.1);">`;
+                    sopsHTML += `<div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px; border-radius: 8px; margin-bottom: 15px;">`;
+                    sopsHTML += `<h3 style="margin: 0; font-size: 1.5em;">Step ${idx + 1}: Install ${component.name || 'Unknown'} on MB</h3>`;
+                    if (locationDesc) {
+                        sopsHTML += `<p style="margin: 8px 0 0 0; font-size: 14px; opacity: 0.9;">📍 Location: ${locationDesc}</p>`;
+                    }
+                    sopsHTML += `</div>`;
+                    
+                    // Component details
+                    sopsHTML += `<div style="background: #f5f5f5; padding: 15px; border-radius: 8px; margin-bottom: 15px;">`;
+                    sopsHTML += `<p><strong>Type:</strong> ${component.connector_type || 'Unknown'}</p>`;
+                    sopsHTML += `<p><strong>Risk Level:</strong> ${component.risk_level || 'Medium'}</p>`;
+                    sopsHTML += `<p><strong>Voltage:</strong> ${component.voltage || 'Unknown'}</p>`;
+                    sopsHTML += `<p><strong>Pin Count:</strong> ${component.pin_count || 'Unknown'}</p>`;
+                    sopsHTML += `</div>`;
+                    
+                    // SOP Steps
+                    sopsHTML += `<h4 style="color: #283593; margin-top: 20px; margin-bottom: 10px;">📝 Installation Steps:</h4>`;
+                    sopsHTML += `<ol style="margin-left: 20px;">`;
+                    sopSteps.forEach((step, stepIdx) => {
+                        sopsHTML += `<li style="margin-bottom: 10px; padding: 8px; background: #f9f9f9; border-radius: 5px;">${step}</li>`;
+                    });
+                    sopsHTML += `</ol>`;
+                    
+                    // Explanations
+                    if (explanations.length > 0) {
+                        sopsHTML += `<h4 style="color: #283593; margin-top: 20px; margin-bottom: 10px;">💡 Detailed Explanations:</h4>`;
+                        explanations.forEach((exp, expIdx) => {
+                            sopsHTML += `<div style="background: #e3f2fd; padding: 15px; border-radius: 8px; margin-bottom: 10px; border-left: 4px solid #2196F3;">`;
+                            sopsHTML += `<p><strong>Step ${exp.step_number}:</strong> ${exp.step_text}</p>`;
+                            sopsHTML += `<p><strong>Explanation:</strong> ${exp.explanation || 'N/A'}</p>`;
+                            sopsHTML += `<p><strong>Why Important:</strong> ${exp.why_important || 'N/A'}</p>`;
+                            if (exp.common_mistakes) {
+                                sopsHTML += `<p><strong>Common Mistakes:</strong> ${exp.common_mistakes}</p>`;
+                            }
+                            sopsHTML += `</div>`;
+                        });
+                    }
+                    
+                    // QA Result
+                    if (qaResult.status) {
+                        sopsHTML += `<h4 style="color: #283593; margin-top: 20px; margin-bottom: 10px;">✅ QA Validation:</h4>`;
+                        sopsHTML += `<div style="background: ${qaResult.status === 'Approved' ? '#e8f5e9' : '#fff3e0'}; padding: 15px; border-radius: 8px;">`;
+                        sopsHTML += `<p><strong>Status:</strong> ${qaResult.status || 'Unknown'}</p>`;
+                        sopsHTML += `<p><strong>Safety Score:</strong> ${qaResult.safety_score || 0}/100</p>`;
+                        if (qaResult.warnings && qaResult.warnings.length > 0) {
+                            sopsHTML += `<p><strong>Warnings:</strong></p><ul style="margin-left: 20px;">`;
+                            qaResult.warnings.forEach(w => sopsHTML += `<li>${w}</li>`);
+                            sopsHTML += `</ul>`;
+                        }
+                        sopsHTML += `</div>`;
+                    }
+                    
+                    sopsHTML += `</div>`;
+                });
+                allConnectorsWithSOPsDiv.innerHTML = sopsHTML;
+            } else if (allConnectorsWithSOPsDiv) {
+                allConnectorsWithSOPsDiv.innerHTML = '<p style="color: #666;">No connector SOPs available</p>';
             }
             
             // Display component info

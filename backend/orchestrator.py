@@ -20,9 +20,13 @@ class AgentState(TypedDict):
     task: str
     components: List[Dict[str, Any]]
     target_component: Dict[str, Any]
+    all_components_enriched: List[Dict[str, Any]]
     sop_data: Dict[str, Any]
+    all_sop_data: List[Dict[str, Any]]  # SOPs for all components
     explanations: List[Dict[str, Any]]
+    all_explanations: List[Dict[str, Any]]  # Explanations for all components
     qa_result: Dict[str, Any]
+    all_qa_results: List[Dict[str, Any]]  # QA results for all components
     annotated_image_path: str
     pdf_path: str
     status: str
@@ -60,13 +64,16 @@ class Orchestrator:
         """
         state: AgentState = {
             "image_path": image_path,
-            "task": task or "",
+            "task": task or "Analyze All Connectors",
             "components": [],
             "target_component": {},
             "all_components_enriched": [],
             "sop_data": {},
+            "all_sop_data": [],
             "explanations": [],
+            "all_explanations": [],
             "qa_result": {},
+            "all_qa_results": [],
             "annotated_image_path": "",
             "pdf_path": "",
             "status": "processing",
@@ -85,23 +92,23 @@ class Orchestrator:
                 if state["status"] == "error":
                     return state
             
-            # Step 3: Knowledge Agent - Enrich components
+            # Step 3: Knowledge Agent - Enrich ALL components
             state = self._run_knowledge_agent(state)
             if state["status"] == "error":
                 return state
             
-            # Step 4: SOP Planning Agent - Generate steps
-            state = self._run_sop_planning_agent(state)
+            # Step 4: Generate SOPs for ALL components
+            state = self._run_all_sop_planning(state)
             if state["status"] == "error":
                 return state
             
-            # Step 5: Explanation Agent - Generate explanations
-            state = self._run_explanation_agent(state)
+            # Step 5: Generate explanations for ALL components
+            state = self._run_all_explanations(state)
             if state["status"] == "error":
                 return state
             
-            # Step 6: QA Agent - Validate SOP
-            state = self._run_qa_agent(state)
+            # Step 6: QA Agent - Validate all SOPs
+            state = self._run_all_qa_validation(state)
             
             # Step 7: PDF Generator - Create report
             state = self._run_pdf_generator(state)
@@ -181,43 +188,89 @@ class Orchestrator:
             state["error"] = f"Knowledge agent error: {str(e)}"
             return state
     
-    def _run_sop_planning_agent(self, state: AgentState) -> AgentState:
-        """Run SOP planning agent"""
+    def _run_all_sop_planning(self, state: AgentState) -> AgentState:
+        """Generate SOPs for ALL detected components"""
         try:
-            sop_data = self.sop_planning_agent.generate_sop(
-                state["target_component"],
-                state["task"]
-            )
-            state["sop_data"] = sop_data
+            all_sop_data = []
+            
+            # Generate SOP for each enriched component
+            for component in state["all_components_enriched"]:
+                task_for_component = f"Install {component.get('name', 'Component')}"
+                sop_data = self.sop_planning_agent.generate_sop(
+                    component,
+                    task_for_component,
+                    state["all_components_enriched"]
+                )
+                all_sop_data.append({
+                    "component": component,
+                    "sop_data": sop_data
+                })
+            
+            # Set first component's SOP as primary (for backward compatibility)
+            if all_sop_data:
+                state["target_component"] = all_sop_data[0]["component"]
+                state["sop_data"] = all_sop_data[0]["sop_data"]
+            
+            state["all_sop_data"] = all_sop_data
             return state
         except Exception as e:
             state["status"] = "error"
             state["error"] = f"SOP planning agent error: {str(e)}"
             return state
     
-    def _run_explanation_agent(self, state: AgentState) -> AgentState:
-        """Run explanation agent"""
+    def _run_all_explanations(self, state: AgentState) -> AgentState:
+        """Generate explanations for ALL components"""
         try:
-            explanations = self.explanation_agent.generate_explanations(
-                state["sop_data"].get("sop_steps", []),
-                state["target_component"]
-            )
-            state["explanations"] = explanations
+            all_explanations = []
+            
+            for sop_item in state["all_sop_data"]:
+                component = sop_item["component"]
+                sop_data = sop_item["sop_data"]
+                explanations = self.explanation_agent.generate_explanations(
+                    sop_data.get("sop_steps", []),
+                    component
+                )
+                all_explanations.append({
+                    "component_name": component.get("name", "Unknown"),
+                    "explanations": explanations
+                })
+            
+            # Set first component's explanations as primary (for backward compatibility)
+            if all_explanations:
+                state["explanations"] = all_explanations[0]["explanations"]
+            
+            state["all_explanations"] = all_explanations
             return state
         except Exception as e:
             state["status"] = "error"
             state["error"] = f"Explanation agent error: {str(e)}"
             return state
     
-    def _run_qa_agent(self, state: AgentState) -> AgentState:
-        """Run QA agent"""
+    def _run_all_qa_validation(self, state: AgentState) -> AgentState:
+        """Validate SOPs for ALL components"""
         try:
-            qa_result = self.qa_agent.validate_sop(
-                state["sop_data"].get("sop_steps", []),
-                state["target_component"],
-                state["explanations"]
-            )
-            state["qa_result"] = qa_result
+            all_qa_results = []
+            
+            for i, sop_item in enumerate(state["all_sop_data"]):
+                component = sop_item["component"]
+                sop_data = sop_item["sop_data"]
+                explanations = state["all_explanations"][i]["explanations"] if i < len(state["all_explanations"]) else []
+                
+                qa_result = self.qa_agent.validate_sop(
+                    sop_data.get("sop_steps", []),
+                    component,
+                    explanations
+                )
+                all_qa_results.append({
+                    "component_name": component.get("name", "Unknown"),
+                    "qa_result": qa_result
+                })
+            
+            # Set first component's QA as primary (for backward compatibility)
+            if all_qa_results:
+                state["qa_result"] = all_qa_results[0]["qa_result"]
+            
+            state["all_qa_results"] = all_qa_results
             return state
         except Exception as e:
             state["status"] = "error"
@@ -240,7 +293,10 @@ class Orchestrator:
                 state["sop_data"],
                 state["explanations"],
                 state["qa_result"],
-                state.get("all_components_enriched", [])
+                state.get("all_components_enriched", []),
+                state.get("all_sop_data", []),
+                state.get("all_explanations", []),
+                state.get("all_qa_results", [])
             )
             
             # Store relative path for API response

@@ -65,6 +65,64 @@ class SOPPlanningAgent:
                 "Engage the locking mechanism until it clicks into the locked position.",
                 "Verify the connector is securely locked and the cable cannot be easily removed.",
                 "Inspect for proper alignment and ensure all pins are properly engaged."
+            ],
+            "LED Connector": [
+                "Ensure the motherboard is powered off and disconnected from all power sources.",
+                "Locate the LED connector header on the motherboard (typically in the top-left corner, near power indicator area).",
+                "Identify the 2-pin header and check for polarity markings (+ and -).",
+                "Verify the LED cable polarity matches the header markings (positive to positive, negative to negative).",
+                "Align the LED connector with the header pins, ensuring correct polarity orientation.",
+                "Insert the connector vertically onto the header pins, applying gentle downward pressure.",
+                "Push until the connector is fully seated (connector should sit flush with the header).",
+                "Verify the connection is secure and check that both pins are properly engaged.",
+                "Test the LED functionality by powering on the system (LED should light up if installed correctly)."
+            ],
+            "USB Connector": [
+                "Power off the motherboard and disconnect all power sources.",
+                "Locate the USB connector port on the motherboard (typically on the right edge, middle section, stacked vertically).",
+                "Identify the USB port type (USB 2.0 has 4 pins, USB 3.0 has 9 pins) and check for port orientation.",
+                "Verify the USB connector matches the port standard (USB 2.0 or USB 3.0).",
+                "Align the USB connector with the port, ensuring proper orientation (check for keying/notch).",
+                "Insert the connector horizontally into the port, applying even pressure.",
+                "Push until the connector is fully seated and sits flush with the motherboard edge.",
+                "Verify the connection is secure by gently pulling outward (should not disconnect easily).",
+                "Check that all pins are properly engaged and the port is not damaged.",
+                "Test USB functionality by connecting a USB device after power-on."
+            ],
+            "Power Connector": [
+                "CRITICAL: Ensure the motherboard is completely powered off and disconnected from all power sources.",
+                "Locate the DC power jack on the motherboard (typically on the right edge, bottom section, for AC adapter connection).",
+                "Identify the power jack orientation and verify the voltage rating (typically 19V for laptops).",
+                "Check the AC adapter voltage matches the motherboard requirement before connection.",
+                "Verify the power jack polarity (center positive, outer negative is standard).",
+                "Align the DC plug with the power jack, ensuring correct orientation.",
+                "Insert the DC plug horizontally into the jack until it clicks into place.",
+                "Verify the connection is secure and the plug cannot be easily removed.",
+                "Perform a final safety check: ensure no exposed wires and verify voltage rating.",
+                "WARNING: Do not power on until all other components are properly installed."
+            ],
+            "Audio Connector": [
+                "Ensure the motherboard is powered off and disconnected from all power sources.",
+                "Locate the audio jack connector on the motherboard (typically in the top-right corner, for headphone/microphone).",
+                "Identify the audio jack type (3-pin TRS for headphones, 4-pin TRRS for headset with mic).",
+                "Check the audio jack orientation and verify it matches the connector type.",
+                "Align the audio connector with the jack, ensuring proper orientation.",
+                "Insert the connector vertically into the jack until it clicks into place.",
+                "Verify the connection is secure and the connector is fully seated.",
+                "Check that all pins are properly engaged and the jack is not damaged.",
+                "Test audio functionality by connecting headphones/headset after power-on."
+            ],
+            "SATA Connector": [
+                "Power off the motherboard and disconnect all power sources.",
+                "Locate the SATA connector port on the motherboard (typically on the left edge, lower-middle section, for storage drives).",
+                "Identify the SATA port type (SATA I/II/III) and check for port orientation.",
+                "Verify the SATA cable matches the port standard and check cable orientation (L-shaped key).",
+                "Align the SATA data cable connector with the port, ensuring the L-shaped key matches.",
+                "Insert the data connector horizontally into the port until it clicks into place.",
+                "Connect the SATA power cable to the drive (15-pin power connector).",
+                "Verify both data and power connections are secure and properly seated.",
+                "Check that all pins are properly engaged and cables are not loose.",
+                "Test drive detection by checking BIOS/UEFI after power-on."
             ]
         }
     
@@ -73,12 +131,27 @@ class SOPPlanningAgent:
         component_name = target_component.get("name", "Unknown")
         connector_type = target_component.get("connector_type", "Unknown")
         risk_level = target_component.get("risk_level", "Medium")
+        location_desc = target_component.get("location_description", target_component.get("typical_location", ""))
         
         # Get base steps from template
         base_steps = self.step_templates.get(
             component_name,
-            self._generate_generic_steps(component_name, connector_type)
+            self._generate_generic_steps(component_name, connector_type, location_desc)
         )
+        
+        # Update location information in steps if available
+        if location_desc:
+            for i, step in enumerate(base_steps):
+                if "locate" in step.lower() or "find" in step.lower():
+                    # Enhance location description in the step
+                    if location_desc and location_desc not in step:
+                        base_steps[i] = step.replace(
+                            "on the motherboard",
+                            f"on the motherboard ({location_desc})"
+                        ).replace(
+                            "typically",
+                            f"specifically {location_desc}, typically"
+                        )
         
         # Customize steps based on risk level
         if risk_level == "High":
@@ -124,11 +197,12 @@ class SOPPlanningAgent:
             "total_steps": len(base_steps)
         }
     
-    def _generate_generic_steps(self, component_name: str, connector_type: str) -> List[str]:
+    def _generate_generic_steps(self, component_name: str, connector_type: str, location_desc: str = "") -> List[str]:
         """Generate generic SOP steps for unknown components"""
+        location_info = f" ({location_desc})" if location_desc else ""
         return [
             f"Ensure the motherboard is powered off and disconnected.",
-            f"Locate the {component_name} ({connector_type}) on the motherboard.",
+            f"Locate the {component_name} ({connector_type}) on the motherboard{location_info}.",
             f"Identify the connection mechanism and orientation.",
             f"Align the connector/cable with the motherboard header.",
             f"Insert the connector following the proper orientation.",

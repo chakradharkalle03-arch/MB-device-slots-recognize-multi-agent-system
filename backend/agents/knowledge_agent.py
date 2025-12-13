@@ -102,12 +102,105 @@ class KnowledgeAgent:
                     "Handle connector carefully",
                     "Verify locking mechanism"
                 ]
+            },
+            "LED Connector": {
+                "type": "2-pin LED Header",
+                "typical_location": "top-left corner",
+                "orientation": "Vertical insertion",
+                "pin_count": "2 pins",
+                "voltage": "3.3V-5V",
+                "risk_level": "Low",
+                "common_issues": [
+                    "Polarity reversal",
+                    "Loose connection",
+                    "LED not lighting"
+                ],
+                "safety_notes": [
+                    "ESD protection recommended",
+                    "Check polarity markings",
+                    "Verify LED orientation"
+                ]
+            },
+            "USB Connector": {
+                "type": "USB Type-A Port",
+                "typical_location": "right edge",
+                "orientation": "Horizontal insertion",
+                "pin_count": "4 pins (USB 2.0) or 9 pins (USB 3.0)",
+                "voltage": "5V",
+                "risk_level": "Low",
+                "common_issues": [
+                    "Port damage",
+                    "Loose connection",
+                    "USB device not recognized"
+                ],
+                "safety_notes": [
+                    "Power off recommended",
+                    "Check port alignment",
+                    "Verify USB standard compatibility"
+                ]
+            },
+            "Power Connector": {
+                "type": "DC Jack",
+                "typical_location": "right edge, bottom",
+                "orientation": "Horizontal insertion",
+                "pin_count": "1 pin (center positive)",
+                "voltage": "19V (typical)",
+                "risk_level": "High",
+                "common_issues": [
+                    "Polarity reversal",
+                    "Loose connection",
+                    "Jack damage"
+                ],
+                "safety_notes": [
+                    "CRITICAL: Power off required",
+                    "Verify voltage rating",
+                    "Check polarity before connection",
+                    "No power during installation"
+                ]
+            },
+            "Audio Connector": {
+                "type": "Audio Jack",
+                "typical_location": "top-right corner",
+                "orientation": "Vertical insertion",
+                "pin_count": "3-4 pins (TRS/TRRS)",
+                "voltage": "3.3V",
+                "risk_level": "Low",
+                "common_issues": [
+                    "Jack damage",
+                    "Loose connection",
+                    "Audio not working"
+                ],
+                "safety_notes": [
+                    "ESD protection recommended",
+                    "Handle jack carefully",
+                    "Verify audio functionality after installation"
+                ]
+            },
+            "SATA Connector": {
+                "type": "SATA Port",
+                "typical_location": "left edge, lower-middle",
+                "orientation": "Horizontal insertion",
+                "pin_count": "7 pins (data) + 15 pins (power)",
+                "voltage": "5V/12V",
+                "risk_level": "Medium",
+                "common_issues": [
+                    "Cable misalignment",
+                    "Loose connection",
+                    "Drive not detected"
+                ],
+                "safety_notes": [
+                    "Power off required",
+                    "Check cable orientation",
+                    "Verify SATA standard (SATA I/II/III)"
+                ]
             }
         }
     
     def enrich_component(self, component: Dict[str, Any]) -> Dict[str, Any]:
         """Enrich detected component with knowledge base information"""
         component_name = component.get("name", "")
+        # Preserve location_description if it exists from vision agent
+        location_desc = component.get("location_description", "")
         
         if component_name in self.component_database:
             knowledge = self.component_database[component_name]
@@ -118,8 +211,12 @@ class KnowledgeAgent:
                 "voltage": knowledge["voltage"],
                 "pin_count": knowledge["pin_count"],
                 "common_issues": knowledge["common_issues"],
-                "safety_notes": knowledge["safety_notes"]
+                "safety_notes": knowledge["safety_notes"],
+                "typical_location": knowledge.get("typical_location", "")
             })
+            # Use knowledge base location if vision agent didn't provide one
+            if not location_desc:
+                component["location_description"] = knowledge.get("typical_location", "")
         else:
             # Default values for unknown components
             component.update({
@@ -129,8 +226,11 @@ class KnowledgeAgent:
                 "voltage": "Unknown",
                 "pin_count": "Unknown",
                 "common_issues": [],
-                "safety_notes": ["ESD protection recommended"]
+                "safety_notes": ["ESD protection recommended"],
+                "typical_location": location_desc if location_desc else "Unknown location"
             })
+            if not location_desc:
+                component["location_description"] = "Unknown location"
         
         return component
     

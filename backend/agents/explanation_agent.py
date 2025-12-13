@@ -53,16 +53,19 @@ class ExplanationAgent:
         explanations = []
         connector_type = target_component.get("connector_type", "")
         risk_level = target_component.get("risk_level", "Medium")
+        location_desc = target_component.get("location_description", target_component.get("typical_location", ""))
+        component_name = target_component.get("name", "component")
         
         for idx, step in enumerate(sop_steps, 1):
-            explanation = self._explain_step(step, idx, connector_type, risk_level)
+            explanation = self._explain_step(step, idx, connector_type, risk_level, location_desc, component_name)
             explanations.append({
                 "step_number": idx,
                 "step_text": step,
                 "explanation": explanation["explanation"],
                 "why_important": explanation["why"],
                 "common_mistakes": explanation["mistakes"],
-                "quality_check": explanation["quality_check"]
+                "quality_check": explanation["quality_check"],
+                "location_on_mb": explanation.get("location_on_mb", "")
             })
         
         return explanations
@@ -72,10 +75,28 @@ class ExplanationAgent:
         step: str,
         step_num: int,
         connector_type: str,
-        risk_level: str
+        risk_level: str,
+        location_desc: str = "",
+        component_name: str = ""
     ) -> Dict[str, str]:
         """Generate explanation for a single step"""
         step_lower = step.lower()
+        
+        # Location explanation - enhanced with MB position
+        if "locate" in step_lower or "find" in step_lower:
+            location_info = ""
+            if location_desc:
+                location_info = f" This {component_name} is located {location_desc} on the motherboard. "
+            else:
+                location_info = f" Look for the {component_name} connector on the motherboard. "
+            
+            return {
+                "explanation": f"{location_info}The connector is typically marked with labels or silkscreen text. Check the motherboard layout diagram if available. Identify the connector by its physical characteristics: pin count, connector type ({connector_type}), and surrounding components.",
+                "why": f"Correctly locating the {component_name} ensures you're working on the right component and prevents damage to other parts of the motherboard.",
+                "mistakes": "Looking at wrong connector, not checking labels, confusing similar connectors, not referring to motherboard documentation.",
+                "quality_check": f"Verify you've found the correct {component_name} by checking: connector type matches ({connector_type}), location matches description ({location_desc if location_desc else 'typical location'}), and surrounding components match expected layout.",
+                "location_on_mb": location_desc if location_desc else "Check motherboard layout"
+            }
         
         # Power off explanation
         if "power" in step_lower and ("off" in step_lower or "disconnect" in step_lower):
