@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manufacturing SOP Automation</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #1a237e 0%, #283593 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .content {
+            padding: 40px;
+        }
+
+        .upload-section {
+            background: #f5f5f5;
+            border-radius: 10px;
+            padding: 30px;
+            margin-bottom: 30px;
+            border: 2px dashed #667eea;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #333;
+        }
+
+        input[type="file"],
+        input[type="text"] {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+
+        input[type="file"]:focus,
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 15px 40px;
+            border: none;
+            border-radius: 8px;
+            font-size: 18px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            width: 100%;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 20px;
+        }
+
+        .loading.active {
+            display: block;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .results {
+            display: none;
+            margin-top: 30px;
+        }
+
+        .results.active {
+            display: block;
+        }
+
+        .result-section {
+            background: #f9f9f9;
+            border-radius: 10px;
+            padding: 25px;
+            margin-bottom: 20px;
+            border-left: 4px solid #667eea;
+        }
+
+        .result-section h2 {
+            color: #1a237e;
+            margin-bottom: 15px;
+            font-size: 1.5em;
+        }
+
+        .component-info {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .info-item {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+        }
+
+        .info-item strong {
+            color: #667eea;
+            display: block;
+            margin-bottom: 5px;
+        }
+
+        .sop-steps {
+            list-style: none;
+            counter-reset: step-counter;
+        }
+
+        .sop-steps li {
+            counter-increment: step-counter;
+            padding: 15px;
+            margin-bottom: 10px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+            position: relative;
+            padding-left: 50px;
+        }
+
+        .sop-steps li::before {
+            content: counter(step-counter);
+            position: absolute;
+            left: 15px;
+            top: 15px;
+            background: #667eea;
+            color: white;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+        }
+
+        .explanation-item {
+            background: white;
+            padding: 20px;
+            margin-bottom: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+        }
+
+        .explanation-item h3 {
+            color: #1a237e;
+            margin-bottom: 10px;
+        }
+
+        .qa-status {
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+        }
+
+        .qa-status.approved {
+            background: #d4edda;
+            color: #155724;
+            border-left: 4px solid #28a745;
+        }
+
+        .qa-status.warning {
+            background: #fff3cd;
+            color: #856404;
+            border-left: 4px solid #ffc107;
+        }
+
+        .qa-status.revision {
+            background: #f8d7da;
+            color: #721c24;
+            border-left: 4px solid #dc3545;
+        }
+
+        .download-btn {
+            background: #28a745;
+            margin-top: 20px;
+        }
+
+        .download-btn:hover {
+            box-shadow: 0 10px 20px rgba(40, 167, 69, 0.4);
+        }
+
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+            border-left: 4px solid #dc3545;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🏭 Manufacturing SOP Automation</h1>
+            <p>AI-Powered Standard Operating Procedure Generator</p>
+        </div>
+
+        <div class="content">
+            <div class="upload-section">
+                <form id="sopForm">
+                    <div class="form-group">
+                        <label for="imageUpload">Upload Motherboard Image</label>
+                        <input type="file" id="imageUpload" name="image" accept="image/*" required>
+                        <p style="margin-top: 10px; color: #666; font-size: 14px;">
+                            🤖 AI will automatically detect the installation task from the image
+                        </p>
+                    </div>
+
+                    <button type="submit" class="btn" id="generateBtn">Generate SOP</button>
+                </form>
+            </div>
+
+            <div class="loading" id="loading">
+                <div class="spinner"></div>
+                <p>Analyzing motherboard image and detecting components...</p>
+                <p style="font-size: 14px; margin-top: 10px; color: #666;">
+                    AI is automatically determining the installation task...
+                </p>
+            </div>
+
+            <div class="error" id="error" style="display: none;"></div>
+
+            <div class="results" id="results">
+                <div class="result-section">
+                    <h2>🤖 Auto-Detected Task</h2>
+                    <div id="detectedTask" style="background: #e3f2fd; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+                        <strong style="color: #1a237e;">Task:</strong> <span id="taskName" style="font-size: 18px; color: #283593;"></span>
+                    </div>
+                </div>
+                
+                <div class="result-section">
+                    <h2>🔌 All Detected Connectors/Slots on Motherboard</h2>
+                    <div id="allConnectors" style="margin-top: 15px;"></div>
+                </div>
+                
+                <div class="result-section">
+                    <h2>📋 Target Component (For SOP)</h2>
+                    <div class="component-info" id="componentInfo"></div>
+                </div>
+
+                <div class="result-section">
+                    <h2>📝 SOP Steps</h2>
+                    <ol class="sop-steps" id="sopSteps"></ol>
+                </div>
+
+                <div class="result-section">
+                    <h2>💡 Detailed Explanations</h2>
+                    <div id="explanations"></div>
+                </div>
+
+                <div class="result-section">
+                    <h2>✅ QA Validation</h2>
+                    <div id="qaResult"></div>
+                </div>
+
+                <button class="btn download-btn" id="downloadBtn">Download PDF Report</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const BACKEND_URL = 'http://localhost:8001';
+        let currentPdfPath = '';
+
+        document.getElementById('sopForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const formData = new FormData();
+            const imageFile = document.getElementById('imageUpload').files[0];
+
+            if (!imageFile) {
+                showError('Please upload a motherboard image');
+                return;
+            }
+
+            formData.append('image', imageFile);
+            // Task will be automatically detected by AI
+
+            // Show loading, hide results and error
+            document.getElementById('loading').classList.add('active');
+            document.getElementById('results').classList.remove('active');
+            document.getElementById('error').style.display = 'none';
+            document.getElementById('generateBtn').disabled = true;
+
+            try {
+                const response = await fetch(`${BACKEND_URL}/api/generate-sop`, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.detail || data.error || 'Failed to generate SOP');
+                }
+
+                displayResults(data);
+                currentPdfPath = data.pdf_path || '';
+
+            } catch (error) {
+                showError(error.message || 'An error occurred while generating SOP');
+            } finally {
+                document.getElementById('loading').classList.remove('active');
+                document.getElementById('generateBtn').disabled = false;
+            }
+        });
+
+        function displayResults(data) {
+            // Display detected task
+            const taskName = document.getElementById('taskName');
+            if (taskName) {
+                taskName.textContent = data.task || 'Unknown Task';
+            }
+            
+            // Display all connectors
+            const allConnectors = data.all_connectors || [];
+            const connectorsDiv = document.getElementById('allConnectors');
+            if (connectorsDiv && allConnectors.length > 0) {
+                let connectorsHTML = '<table style="width: 100%; border-collapse: collapse; margin-top: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">';
+                connectorsHTML += '<thead><tr style="background: #1a237e; color: white;">';
+                connectorsHTML += '<th style="padding: 12px; text-align: left; border: 1px solid #ddd;">Connector Name</th>';
+                connectorsHTML += '<th style="padding: 12px; text-align: left; border: 1px solid #ddd;">Type</th>';
+                connectorsHTML += '<th style="padding: 12px; text-align: left; border: 1px solid #ddd;">Device Slot</th>';
+                connectorsHTML += '<th style="padding: 12px; text-align: left; border: 1px solid #ddd;">Risk Level</th>';
+                connectorsHTML += '<th style="padding: 12px; text-align: left; border: 1px solid #ddd;">Voltage</th>';
+                connectorsHTML += '</tr></thead><tbody>';
+                
+                allConnectors.forEach((conn, idx) => {
+                    const rowColor = idx % 2 === 0 ? '#ffffff' : '#f5f5f5';
+                    const deviceSlot = getDeviceSlotName(conn.name);
+                    connectorsHTML += `<tr style="background: ${rowColor};">`;
+                    connectorsHTML += `<td style="padding: 10px; border: 1px solid #ddd;"><strong>${conn.name || 'Unknown'}</strong></td>`;
+                    connectorsHTML += `<td style="padding: 10px; border: 1px solid #ddd;">${conn.connector_type || 'Unknown'}</td>`;
+                    connectorsHTML += `<td style="padding: 10px; border: 1px solid #ddd;">${deviceSlot}</td>`;
+                    connectorsHTML += `<td style="padding: 10px; border: 1px solid #ddd;">${conn.risk_level || 'Medium'}</td>`;
+                    connectorsHTML += `<td style="padding: 10px; border: 1px solid #ddd;">${conn.voltage || 'Unknown'}</td>`;
+                    connectorsHTML += '</tr>';
+                });
+                
+                connectorsHTML += '</tbody></table>';
+                connectorsHTML += `<p style="margin-top: 15px; color: #666; font-weight: bold;"><strong>Total Connectors Detected:</strong> ${allConnectors.length}</p>`;
+                connectorsDiv.innerHTML = connectorsHTML;
+            } else if (connectorsDiv) {
+                connectorsDiv.innerHTML = '<p style="color: #666;">No connectors detected</p>';
+            }
+            
+            // Display component info
+            const component = data.target_component || {};
+            const componentInfo = document.getElementById('componentInfo');
+            componentInfo.innerHTML = `
+                <div class="info-item">
+                    <strong>Component Name</strong>
+                    ${component.name || 'Unknown'}
+                </div>
+                <div class="info-item">
+                    <strong>Connector Type</strong>
+                    ${component.connector_type || 'Unknown'}
+                </div>
+                <div class="info-item">
+                    <strong>Risk Level</strong>
+                    ${component.risk_level || 'Medium'}
+                </div>
+                <div class="info-item">
+                    <strong>Voltage</strong>
+                    ${component.voltage || 'Unknown'}
+                </div>
+            `;
+
+            // Display SOP steps
+            const sopSteps = document.getElementById('sopSteps');
+            sopSteps.innerHTML = '';
+            (data.sop_steps || []).forEach(step => {
+                const li = document.createElement('li');
+                li.textContent = step;
+                sopSteps.appendChild(li);
+            });
+
+            // Display explanations
+            const explanationsDiv = document.getElementById('explanations');
+            explanationsDiv.innerHTML = '';
+            (data.explanations || []).forEach(exp => {
+                const div = document.createElement('div');
+                div.className = 'explanation-item';
+                div.innerHTML = `
+                    <h3>Step ${exp.step_number}: ${exp.step_text}</h3>
+                    <p><strong>Explanation:</strong> ${exp.explanation}</p>
+                    <p><strong>Why Important:</strong> ${exp.why_important}</p>
+                    ${exp.common_mistakes ? `<p><strong>Common Mistakes:</strong> ${exp.common_mistakes}</p>` : ''}
+                `;
+                explanationsDiv.appendChild(div);
+            });
+
+            // Display QA result
+            const qaResult = data.qa_result || {};
+            const qaDiv = document.getElementById('qaResult');
+            const statusClass = qaResult.status === 'Approved' ? 'approved' : 
+                               qaResult.status === 'Approved with Warnings' ? 'warning' : 'revision';
+            qaDiv.innerHTML = `
+                <div class="qa-status ${statusClass}">
+                    <strong>Status:</strong> ${qaResult.status || 'Unknown'}<br>
+                    <strong>Safety Score:</strong> ${qaResult.safety_score || 0}/100
+                </div>
+                ${qaResult.warnings && qaResult.warnings.length > 0 ? `
+                    <div style="margin-top: 15px;">
+                        <strong>Warnings:</strong>
+                        <ul style="margin-top: 10px; margin-left: 20px;">
+                            ${qaResult.warnings.map(w => `<li>${w}</li>`).join('')}
+                        </ul>
+                    </div>
+                ` : ''}
+                ${qaResult.recommendations && qaResult.recommendations.length > 0 ? `
+                    <div style="margin-top: 15px;">
+                        <strong>Recommendations:</strong>
+                        <ul style="margin-top: 10px; margin-left: 20px;">
+                            ${qaResult.recommendations.map(r => `<li>${r}</li>`).join('')}
+                        </ul>
+                    </div>
+                ` : ''}
+            `;
+
+            // Show results
+            document.getElementById('results').classList.add('active');
+        }
+
+        function getDeviceSlotName(connectorName) {
+            const mapping = {
+                "Keyboard Connector": "Keyboard Slot",
+                "RAM Slot": "Memory Module Slot (SO-DIMM)",
+                "Fan Connector": "CPU/System Fan Slot",
+                "Battery Connector": "Battery Power Slot",
+                "Display Connector": "LCD/Display Panel Slot",
+                "USB Connector": "USB Port Slot",
+                "Power Connector": "DC Power Input Slot"
+            };
+            return mapping[connectorName] || `${connectorName} Slot`;
+        }
+
+        document.getElementById('downloadBtn').addEventListener('click', () => {
+            if (!currentPdfPath) {
+                showError('PDF path not available');
+                return;
+            }
+
+            const filename = currentPdfPath.split('/').pop();
+            window.open(`${BACKEND_URL}/api/download-pdf/${filename}`, '_blank');
+        });
+
+        function showError(message) {
+            const errorDiv = document.getElementById('error');
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+        }
+    </script>
+</body>
+</html>
+
