@@ -14,7 +14,15 @@ from typing import Optional
 import os
 import uuid
 from orchestrator import Orchestrator
-from config import CORS_ORIGINS
+from config import CORS_ORIGINS, HUGGINGFACE_API_KEY
+from agents import (
+    AOIVisionAgent,
+    QCDefectAgent,
+    QCReportAgent,
+    EquipmentMonitoringAgent,
+    AnomalyDetectionAgent
+)
+from datetime import datetime
 
 app = FastAPI(title="Manufacturing SOP Automation API", version="1.0.0")
 
@@ -29,6 +37,13 @@ app.add_middleware(
 
 # Initialize orchestrator
 orchestrator = Orchestrator()
+
+# Initialize AOI and Equipment agents
+aoi_vision_agent = AOIVisionAgent(HUGGINGFACE_API_KEY)
+qc_defect_agent = QCDefectAgent()
+qc_report_agent = QCReportAgent()
+equipment_monitoring_agent = EquipmentMonitoringAgent()
+anomaly_detection_agent = AnomalyDetectionAgent()
 
 class TaskRequest(BaseModel):
     task: str
@@ -198,10 +213,19 @@ async def get_system_status():
     }
     
     # System Information
+    try:
+        pytorch_available = 'torch' in sys.modules
+        cuda_available = torch.cuda.is_available() if pytorch_available else False
+        torch_version = torch.__version__ if pytorch_available else 'N/A'
+    except:
+        pytorch_available = False
+        cuda_available = False
+        torch_version = 'N/A'
+    
     status["system"] = {
-        "python_version": f"{torch.__version__ if 'torch' in dir() else 'N/A'}",
-        "pytorch_available": torch.cuda.is_available() if 'torch' in dir() else False,
-        "cuda_available": torch.cuda.is_available() if 'torch' in dir() else False,
+        "python_version": torch_version,
+        "pytorch_available": pytorch_available,
+        "cuda_available": cuda_available,
         "device": orchestrator.vision_agent.device if hasattr(orchestrator.vision_agent, 'device') else "cpu"
     }
     
@@ -271,12 +295,19 @@ async def generate_sop(
                 "qa_result": qa_result
             })
         
+        # Get annotated image filename for frontend display
+        annotated_image_path = result.get("annotated_image_path", "")
+        annotated_image_filename = ""
+        if annotated_image_path:
+            annotated_image_filename = os.path.basename(annotated_image_path)
+        
         response_data = {
             "status": result["status"],
             "task": result.get("task", "Analyze All Connectors"),
             "target_component": result.get("target_component", {}),
             "all_connectors": result.get("all_components_enriched", []),
             "all_connectors_with_sops": all_connectors_data,  # New: All connectors with their SOPs
+            "annotated_image": annotated_image_filename,  # Annotated image filename for frontend
             "sop_steps": result.get("sop_data", {}).get("sop_steps", []),  # Primary SOP (backward compatibility)
             "explanations": result.get("explanations", []),  # Primary explanations (backward compatibility)
             "qa_result": result.get("qa_result", {}),  # Primary QA (backward compatibility)
@@ -330,6 +361,253 @@ async def download_annotated(filename: str):
         raise HTTPException(status_code=404, detail="Annotated image not found")
     
     return FileResponse(image_path, media_type="image/png")
+
+# ==================== AOI Visual Defect Analysis Endpoints ====================
+
+@app.post("/api/aoi/analyze")
+async def analyze_aoi_image(
+    image: UploadFile = File(...),
+    part_number: str = Form("N/A"),
+    lot_number: str = Form("N/A")
+):
+    """
+    Analyze AOI inspection image for defects
+    
+    Args:
+        image: AOI inspection image file
+        part_number: Part number (optional)
+        lot_number: Lot number (optional)
+    
+    Returns:
+        Defect analysis results with QC report
+    """
+    try:
+        # Validate file type
+        if not image.content_type.startswith("image/"):
+            raise HTTPException(status_code=400, detail="File must be an image")
+        
+        # Save uploaded file
+        file_extension = os.path.splitext(image.filename)[1]
+        unique_filename = f"{uuid.uuid4()}{file_extension}"
+        upload_dir = os.path.join(os.path.dirname(__file__), "uploads", "aoi")
+        os.makedirs(upload_dir, exist_ok=True)
+        upload_path = os.path.join(upload_dir, unique_filename)
+        
+        with open(upload_path, "wb") as buffer:
+            content = await image.read()
+            buffer.write(content)
+        
+        # Detect defects
+        detection_result = aoi_vision_agent.detect_defects(upload_path)
+        
+        # Classify defects
+        classified_defects = qc_defect_agent.classify_defects(detection_result.get("defects", []))
+        
+        # Reduce false positives
+        original_count = len(classified_defects)
+        filtered_defects = qc_defect_agent.reduce_false_positives(classified_defects)
+        false_positive_reduction = qc_defect_agent.calculate_false_positive_reduction(
+            original_count, len(filtered_defects)
+        )
+        
+        # Generate QC report
+        qc_report = qc_report_agent.generate_qc_report(
+            defects=filtered_defects,
+            pass_fail_status=detection_result.get("status", "PASS"),
+            part_number=part_number,
+            lot_number=lot_number
+        )
+        
+        # Annotate image with defects
+        annotated_dir = os.path.join(os.path.dirname(__file__), "outputs", "aoi_annotated")
+        os.makedirs(annotated_dir, exist_ok=True)
+        annotated_filename = f"aoi_{uuid.uuid4()}.png"
+        annotated_path = os.path.join(annotated_dir, annotated_filename)
+        aoi_vision_agent.annotate_image(upload_path, filtered_defects, annotated_path)
+        
+        response_data = {
+            "status": "completed",
+            "detection_result": detection_result,
+            "classified_defects": filtered_defects,
+            "false_positive_reduction": false_positive_reduction,
+            "qc_report": qc_report,
+            "annotated_image": f"/api/download-aoi-annotated/{annotated_filename}",
+            "original_image": upload_path
+        }
+        
+        return JSONResponse(content=response_data)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"AOI analysis error: {str(e)}")
+
+@app.get("/api/download-aoi-annotated/{filename}")
+async def download_aoi_annotated(filename: str):
+    """Download AOI annotated image"""
+    image_path = os.path.join(os.path.dirname(__file__), "outputs", "aoi_annotated", filename)
+    
+    if not os.path.exists(image_path):
+        raise HTTPException(status_code=404, detail="Annotated AOI image not found")
+    
+    return FileResponse(image_path, media_type="image/png")
+
+# ==================== Equipment Monitoring Endpoints ====================
+
+@app.get("/api/equipment/list")
+async def get_equipment_list():
+    """
+    Get list of all monitored equipment
+    
+    Returns:
+        List of equipment with status
+    """
+    try:
+        equipment_list = equipment_monitoring_agent.get_equipment_list()
+        return JSONResponse(content={
+            "status": "success",
+            "equipment": equipment_list,
+            "total_count": len(equipment_list)
+        })
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching equipment list: {str(e)}")
+
+@app.get("/api/equipment/{equipment_id}/status")
+async def get_equipment_status(equipment_id: str):
+    """
+    Get current status and metrics for specific equipment
+    
+    Args:
+        equipment_id: Equipment ID (e.g., EQ-001)
+    
+    Returns:
+        Equipment status and metrics
+    """
+    try:
+        # Get equipment type (simplified - in production would query database)
+        equipment_list = equipment_monitoring_agent.get_equipment_list()
+        equipment_info = next(
+            (eq for eq in equipment_list if eq["equipment_id"] == equipment_id),
+            None
+        )
+        
+        if not equipment_info:
+            raise HTTPException(status_code=404, detail=f"Equipment {equipment_id} not found")
+        
+        # Collect current data
+        current_data = equipment_monitoring_agent.collect_equipment_data(
+            equipment_id, equipment_info["equipment_type"]
+        )
+        
+        # Detect anomalies
+        anomaly_result = anomaly_detection_agent.detect_anomalies(current_data)
+        
+        response_data = {
+            "status": "success",
+            "equipment_id": equipment_id,
+            "equipment_type": equipment_info["equipment_type"],
+            "current_metrics": current_data,
+            "anomaly_detection": anomaly_result,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        return JSONResponse(content=response_data)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching equipment status: {str(e)}")
+
+@app.get("/api/equipment/{equipment_id}/anomalies")
+async def get_equipment_anomalies(equipment_id: str):
+    """
+    Get anomaly detection results for equipment
+    
+    Args:
+        equipment_id: Equipment ID
+    
+    Returns:
+        Anomaly detection results and predictions
+    """
+    try:
+        equipment_list = equipment_monitoring_agent.get_equipment_list()
+        equipment_info = next(
+            (eq for eq in equipment_list if eq["equipment_id"] == equipment_id),
+            None
+        )
+        
+        if not equipment_info:
+            raise HTTPException(status_code=404, detail=f"Equipment {equipment_id} not found")
+        
+        # Collect current data
+        current_data = equipment_monitoring_agent.collect_equipment_data(
+            equipment_id, equipment_info["equipment_type"]
+        )
+        
+        # Detect anomalies
+        anomaly_result = anomaly_detection_agent.detect_anomalies(current_data)
+        
+        return JSONResponse(content={
+            "status": "success",
+            "equipment_id": equipment_id,
+            "anomaly_detection": anomaly_result,
+            "timestamp": datetime.now().isoformat()
+        })
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error detecting anomalies: {str(e)}")
+
+@app.get("/api/equipment/dashboard")
+async def get_equipment_dashboard():
+    """
+    Get dashboard data for all equipment
+    
+    Returns:
+        Summary dashboard with all equipment status
+    """
+    try:
+        equipment_list = equipment_monitoring_agent.get_equipment_list()
+        dashboard_data = []
+        
+        for equipment in equipment_list:
+            current_data = equipment_monitoring_agent.collect_equipment_data(
+                equipment["equipment_id"], equipment["equipment_type"]
+            )
+            anomaly_result = anomaly_detection_agent.detect_anomalies(current_data)
+            
+            dashboard_data.append({
+                "equipment_id": equipment["equipment_id"],
+                "equipment_type": equipment["equipment_type"],
+                "status": current_data.get("status", "UNKNOWN"),
+                "anomaly_status": anomaly_result.get("status", "NORMAL"),
+                "alert_level": anomaly_result.get("alert_level", "NONE"),
+                "anomaly_count": anomaly_result.get("anomaly_count", 0),
+                "critical_anomalies": anomaly_result.get("critical_anomalies", 0),
+                "predictions": anomaly_result.get("predictions", [])
+            })
+        
+        # Calculate summary statistics
+        total_equipment = len(dashboard_data)
+        critical_count = len([d for d in dashboard_data if d["alert_level"] == "IMMEDIATE_ACTION"])
+        warning_count = len([d for d in dashboard_data if d["alert_level"] == "REVIEW_REQUIRED"])
+        normal_count = len([d for d in dashboard_data if d["alert_level"] == "NONE"])
+        
+        return JSONResponse(content={
+            "status": "success",
+            "summary": {
+                "total_equipment": total_equipment,
+                "critical": critical_count,
+                "warning": warning_count,
+                "normal": normal_count
+            },
+            "equipment": dashboard_data,
+            "timestamp": datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generating dashboard: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn

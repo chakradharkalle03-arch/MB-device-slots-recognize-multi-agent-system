@@ -153,20 +153,14 @@ class PDFGeneratorAgent:
         elements = []
         
         title = Paragraph(
-            f"AI-Generated SOP<br/>{task}",
+            "AI-Generated SOP",
             self.styles['CustomTitle']
         )
         elements.append(Spacer(1, 2*inch))
         elements.append(title)
         elements.append(Spacer(1, 0.5*inch))
         
-        subtitle = Paragraph(
-            f"Component: {target_component.get('name', 'Unknown')}<br/>"
-            f"Connector Type: {target_component.get('connector_type', 'Unknown')}<br/>"
-            f"Risk Level: {target_component.get('risk_level', 'Medium')}",
-            self.styles['Normal']
-        )
-        elements.append(subtitle)
+        # Removed subtitle - only showing "AI-Generated SOP"
         elements.append(Spacer(1, 1*inch))
         
         footer = Paragraph(
