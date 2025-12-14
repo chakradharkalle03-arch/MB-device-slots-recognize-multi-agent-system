@@ -139,19 +139,24 @@ class SOPPlanningAgent:
             self._generate_generic_steps(component_name, connector_type, location_desc)
         )
         
-        # Update location information in steps if available
+        # Update location information in steps if available (avoid duplication)
         if location_desc:
             for i, step in enumerate(base_steps):
                 if "locate" in step.lower() or "find" in step.lower():
-                    # Enhance location description in the step
+                    # Only add location if not already present in step
                     if location_desc and location_desc not in step:
-                        base_steps[i] = step.replace(
-                            "on the motherboard",
-                            f"on the motherboard ({location_desc})"
-                        ).replace(
-                            "typically",
-                            f"specifically {location_desc}, typically"
-                        )
+                        # Simple replacement: add location after "on the motherboard"
+                        if "on the motherboard" in step and "(" not in step:
+                            base_steps[i] = step.replace(
+                                "on the motherboard",
+                                f"on the motherboard ({location_desc})"
+                            )
+                        elif "typically" in step and location_desc not in step and "(" not in step:
+                            # Replace "typically" with location + "typically"
+                            base_steps[i] = step.replace(
+                                "typically",
+                                f"{location_desc}, typically"
+                            )
         
         # Customize steps based on risk level
         if risk_level == "High":
@@ -161,33 +166,8 @@ class SOPPlanningAgent:
         if not any("ESD" in step.upper() for step in base_steps):
             base_steps.insert(1, "Put on ESD wrist strap and ensure proper grounding.")
         
-        # Battery connector MUST always be the final step if it exists
-        if all_components:
-            battery_component = None
-            for comp in all_components:
-                if "battery" in comp.get("name", "").lower():
-                    battery_component = comp
-                    break
-            
-            if battery_component:
-                # If battery is NOT the target, add it as final step
-                if component_name != "Battery Connector":
-                    battery_steps = self.step_templates.get(
-                        "Connect Battery",
-                        self._generate_generic_steps("Battery Connector", "JST Connector")
-                    )
-                    # Remove power off and ESD from battery steps (already done)
-                    battery_steps = [s for s in battery_steps if "power off" not in s.lower() and "esd" not in s.lower() and "disconnect" not in s.lower()]
-                    # Add battery steps at the end
-                    base_steps.append("")
-                    base_steps.append("=== FINAL STEP: Connect Battery ===")
-                    base_steps.extend(battery_steps)
-                else:
-                    # Battery IS the target - ensure it's marked as final
-                    if not any("FINAL" in step.upper() for step in base_steps):
-                        # Add marker that this is the final step
-                        base_steps.append("")
-                        base_steps.append("=== NOTE: This is the FINAL step - Battery connection must be done last ===")
+        # Note: Battery connector will be handled separately in the orchestrator
+        # to ensure it only appears once at the end of the complete sequence
         
         return {
             "sop_steps": base_steps,

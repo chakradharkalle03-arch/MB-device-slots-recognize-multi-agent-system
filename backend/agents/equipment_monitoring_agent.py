@@ -25,18 +25,57 @@ class EquipmentMonitoringAgent:
         Collect current equipment metrics
         
         In production, this would connect to MES/SCADA systems
-        For PoC, we simulate realistic equipment data
+        For PoC, we simulate realistic equipment data with some anomalies for demo
         """
-        # Simulate equipment metrics
-        base_metrics = {
-            "temperature": random.uniform(20, 80),
-            "vibration": random.uniform(0.1, 2.0),
-            "pressure": random.uniform(0.8, 1.2),
-            "cycle_count": random.randint(1000, 50000),
-            "uptime_hours": random.uniform(100, 2000),
-            "error_count_24h": random.randint(0, 5),
-            "maintenance_due_hours": random.uniform(-100, 500)
-        }
+        # Simulate equipment metrics with some anomalies for demo
+        # EQ-002 (Reflow Oven) - simulate temperature anomaly
+        # EQ-005 (Wave Soldering) - simulate vibration anomaly
+        # EQ-007 (X-Ray) - simulate maintenance due
+        
+        if equipment_id == "EQ-002":
+            # Reflow Oven - temperature trending high
+            base_metrics = {
+                "temperature": random.uniform(88, 92),  # Above normal (85 max)
+                "vibration": random.uniform(0.1, 1.5),
+                "pressure": random.uniform(0.8, 1.2),
+                "cycle_count": random.randint(1000, 50000),
+                "uptime_hours": random.uniform(100, 2000),
+                "error_count_24h": random.randint(3, 8),  # Elevated errors
+                "maintenance_due_hours": random.uniform(50, 150)
+            }
+        elif equipment_id == "EQ-005":
+            # Wave Soldering - vibration anomaly
+            base_metrics = {
+                "temperature": random.uniform(20, 80),
+                "vibration": random.uniform(3.2, 3.8),  # Above normal (3.0 max)
+                "pressure": random.uniform(0.8, 1.2),
+                "cycle_count": random.randint(1000, 50000),
+                "uptime_hours": random.uniform(100, 2000),
+                "error_count_24h": random.randint(2, 6),
+                "maintenance_due_hours": random.uniform(100, 300)
+            }
+        elif equipment_id == "EQ-007":
+            # X-Ray - maintenance due soon
+            base_metrics = {
+                "temperature": random.uniform(20, 80),
+                "vibration": random.uniform(0.1, 2.0),
+                "pressure": random.uniform(0.8, 1.2),
+                "cycle_count": random.randint(1000, 50000),
+                "uptime_hours": random.uniform(100, 2000),
+                "error_count_24h": random.randint(0, 3),
+                "maintenance_due_hours": random.uniform(-50, 80)  # Due soon or overdue
+            }
+        else:
+            # Normal equipment
+            base_metrics = {
+                "temperature": random.uniform(20, 80),
+                "vibration": random.uniform(0.1, 2.0),
+                "pressure": random.uniform(0.8, 1.2),
+                "cycle_count": random.randint(1000, 50000),
+                "uptime_hours": random.uniform(100, 2000),
+                "error_count_24h": random.randint(0, 2),
+                "maintenance_due_hours": random.uniform(200, 500)
+            }
         
         # Add equipment-specific metrics
         if "Oven" in equipment_type:

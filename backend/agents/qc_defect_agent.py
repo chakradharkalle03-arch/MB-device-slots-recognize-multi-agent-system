@@ -131,8 +131,12 @@ class QCDefectAgent:
             if area < 20 and confidence < 0.6:
                 should_include = False
             
-            # Scratch/Mark with low confidence often false positive
+            # Scratch/Mark with low confidence often false positive (filter out)
             if defect_type == "Scratch/Mark" and confidence < 0.65:
+                should_include = False
+            
+            # High false positive risk defects with low confidence should be filtered
+            if false_positive_risk == "High" and confidence < 0.6:
                 should_include = False
             
             if should_include:

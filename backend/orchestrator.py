@@ -193,14 +193,22 @@ class Orchestrator:
         try:
             all_sop_data = []
             
+            # Sort components: Battery should be last
+            sorted_components = sorted(
+                state["all_components_enriched"],
+                key=lambda x: 1 if "battery" in x.get("name", "").lower() else 0
+            )
+            
             # Generate SOP for each enriched component
-            for component in state["all_components_enriched"]:
+            for component in sorted_components:
                 task_for_component = f"Install {component.get('name', 'Component')}"
                 sop_data = self.sop_planning_agent.generate_sop(
                     component,
                     task_for_component,
                     state["all_components_enriched"]
                 )
+                # Filter out empty steps
+                sop_data["sop_steps"] = [step for step in sop_data.get("sop_steps", []) if step.strip()]
                 all_sop_data.append({
                     "component": component,
                     "sop_data": sop_data

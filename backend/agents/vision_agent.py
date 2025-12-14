@@ -23,46 +23,415 @@ class VisionAgent:
     def _load_model(self):
         """Load DETR model for object detection"""
         try:
-            self.processor = AutoImageProcessor.from_pretrained(
-                "facebook/detr-resnet-50",
-                token=self.api_key
-            )
-            self.model = AutoModelForObjectDetection.from_pretrained(
-                "facebook/detr-resnet-50",
-                token=self.api_key
-            )
+            # Try loading without token first (if API key not needed)
+            try:
+                self.processor = AutoImageProcessor.from_pretrained("facebook/detr-resnet-50")
+                self.model = AutoModelForObjectDetection.from_pretrained("facebook/detr-resnet-50")
+            except:
+                # Fallback: try with token if provided
+                if self.api_key and self.api_key != "your_huggingface_token_here":
+                    self.processor = AutoImageProcessor.from_pretrained(
+                        "facebook/detr-resnet-50",
+                        token=self.api_key
+                    )
+                    self.model = AutoModelForObjectDetection.from_pretrained(
+                        "facebook/detr-resnet-50",
+                        token=self.api_key
+                    )
+                else:
+                    raise Exception("DETR model requires API key or public access")
+            
             self.model.to(self.device)
             self.model.eval()
+            print(f"✅ DETR model loaded successfully on {self.device}")
         except Exception as e:
-            print(f"Error loading vision model: {e}")
-            # Fallback to basic detection
+            print(f"⚠️ DETR model not available, using computer vision only: {e}")
+            # Fallback to computer vision only
             self.model = None
+            self.processor = None
     
     def detect_components(self, image_path: str) -> Dict[str, Any]:
         """
-        Detect motherboard components using vision model
-        Always returns ALL connectors for comprehensive SOP generation
+        Detect motherboard components using vision model and image analysis
+        Combines DETR model detection with computer vision techniques
         
         Returns:
             Dictionary with detected components and their bounding boxes
         """
-        # Always use rule-based detection to ensure ALL connectors are detected
-        # This ensures we get all 10 connectors: LED, USB, RAM, Fan, Display, Keyboard, Battery, Power, Audio, SATA
         image = Image.open(image_path).convert("RGB")
-        components = self._rule_based_detection(image.size)
+        image_np = np.array(image)
+        width, height = image.size
+        
+        # Try to use DETR model if available
+        detected_components = []
+        if self.model is not None and self.processor is not None:
+            try:
+                detected_components = self._detect_with_detr(image, image_np)
+            except Exception as e:
+                print(f"DETR detection error: {e}")
+        
+        # Use computer vision to detect actual connectors/slots in image
+        cv_detected = self._detect_with_computer_vision(image_path, image_np, width, height)
+        
+        # Combine detections and map to known components
+        all_detections = detected_components + cv_detected
+        
+        # Map detections to known motherboard components
+        mapped_components = self._map_detections_to_known_components(all_detections, width, height)
+        
+        # Ensure we have all expected connectors (fill missing ones with rule-based)
+        final_components = self._ensure_all_connectors(mapped_components, width, height)
         
         return {
-            "components": components,
+            "components": final_components,
             "image_size": image.size,
-            "status": "success"
+            "status": "success",
+            "detection_method": "hybrid" if detected_components else "cv_based"
         }
+    
+    def _detect_with_detr(self, image: Image.Image, image_np: np.ndarray) -> List[Dict]:
+        """Use DETR model to detect objects in image"""
+        try:
+            inputs = self.processor(images=image, return_tensors="pt")
+            inputs = {k: v.to(self.device) for k, v in inputs.items()}
+            
+            with torch.no_grad():
+                outputs = self.model(**inputs)
+            
+            target_sizes = torch.tensor([image.size[::-1]]).to(self.device)
+            results = self.processor.post_process_object_detection(
+                outputs, threshold=0.3, target_sizes=target_sizes
+            )[0]
+            
+            detections = []
+            for score, label, box in zip(
+                results["scores"].cpu().numpy(),
+                results["labels"].cpu().numpy(),
+                results["boxes"].cpu().numpy()
+            ):
+                if score > 0.3:
+                    x1, y1, x2, y2 = box
+                    detections.append({
+                        "bbox": [float(x1), float(y1), float(x2), float(y2)],
+                        "confidence": float(score),
+                        "label": int(label),
+                        "center": [float((x1 + x2) / 2), float((y1 + y2) / 2)]
+                    })
+            return detections
+        except Exception as e:
+            print(f"DETR detection failed: {e}")
+            return []
+    
+    def _detect_with_computer_vision(self, image_path: str, image_np: np.ndarray, width: int, height: int) -> List[Dict]:
+        """Use OpenCV to detect actual connectors and slots in the image"""
+        import cv2
+        
+        # Convert PIL image to OpenCV format
+        if len(image_np.shape) == 3:
+            gray = cv2.cvtColor(image_np, cv2.COLOR_RGB2GRAY)
+        else:
+            gray = image_np
+        
+        detections = []
+        
+        # Apply adaptive thresholding to better detect connectors
+        # Connectors often have different brightness/contrast
+        adaptive_thresh = cv2.adaptiveThreshold(
+            gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+            cv2.THRESH_BINARY_INV, 11, 2
+        )
+        
+        # Detect rectangular connectors (slots, headers)
+        # Use edge detection and contour analysis
+        edges = cv2.Canny(gray, 30, 100)
+        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        # Also use adaptive threshold contours
+        adaptive_contours, _ = cv2.findContours(adaptive_thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        all_contours = list(contours) + list(adaptive_contours)
+        
+        seen_boxes = set()  # Avoid duplicates
+        
+        for contour in all_contours:
+            area = cv2.contourArea(contour)
+            # Filter by size - connectors are typically medium-sized rectangles
+            # Adjusted for motherboard scale
+            if 200 < area < 80000:  # Wider range for different image sizes
+                x, y, w, h = cv2.boundingRect(contour)
+                
+                # Skip if too small or too large relative to image
+                if w < 10 or h < 10 or w > width * 0.8 or h > height * 0.8:
+                    continue
+                
+                # Create a unique key for this box to avoid duplicates
+                box_key = (x // 10, y // 10, w // 10, h // 10)
+                if box_key in seen_boxes:
+                    continue
+                seen_boxes.add(box_key)
+                
+                aspect_ratio = w / h if h > 0 else 0
+                
+                # Connectors are typically rectangular (aspect ratio 0.2-8.0)
+                if 0.2 <= aspect_ratio <= 8.0:
+                    # Check if it looks like a connector (rectangular shape)
+                    rect_area = w * h
+                    extent = area / rect_area if rect_area > 0 else 0
+                    
+                    # Connectors typically have 40-90% fill
+                    if extent > 0.3:  # Lowered threshold for better detection
+                        # Calculate confidence based on how well it matches connector characteristics
+                        confidence = min(0.85, 0.5 + extent * 0.35)
+                        
+                        detections.append({
+                            "bbox": [float(x), float(y), float(x + w), float(y + h)],
+                            "confidence": confidence,
+                            "type": "connector",
+                            "center": [float(x + w/2), float(y + h/2)],
+                            "area": area,
+                            "aspect_ratio": aspect_ratio
+                        })
+        
+        # Detect circular connectors (audio jacks, power connectors)
+        # Use multiple methods for better detection
+        circles1 = cv2.HoughCircles(
+            gray, cv2.HOUGH_GRADIENT, dp=1, minDist=30,
+            param1=50, param2=30, minRadius=5, maxRadius=50
+        )
+        
+        # Also try with different parameters
+        circles2 = cv2.HoughCircles(
+            gray, cv2.HOUGH_GRADIENT, dp=2, minDist=50,
+            param1=100, param2=50, minRadius=3, maxRadius=80
+        )
+        
+        all_circles = []
+        if circles1 is not None:
+            all_circles.extend(circles1[0])
+        if circles2 is not None:
+            all_circles.extend(circles2[0])
+        
+        if all_circles:
+            circles = np.round(np.array(all_circles)).astype("int")
+            for (x, y, r) in circles:
+                # Avoid duplicates
+                circle_key = (x // 10, y // 10, r // 5)
+                if circle_key not in seen_boxes:
+                    seen_boxes.add(circle_key)
+                    detections.append({
+                        "bbox": [float(x - r), float(y - r), float(x + r), float(y + r)],
+                        "confidence": 0.70,
+                        "type": "circular_connector",
+                        "center": [float(x), float(y)],
+                        "radius": float(r)
+                    })
+        
+        return detections
+    
+    def _map_detections_to_known_components(self, detections: List[Dict], width: int, height: int) -> List[Dict]:
+        """Map detected objects to known motherboard component types"""
+        if not detections:
+            return []
+        
+        # Known component locations and characteristics
+        component_templates = {
+            "RAM Slot": {
+                "aspect_ratio_range": (3.0, 8.0),  # Long horizontal slot
+                "area_range": (5000, 30000),
+                "location_hint": "upper_right",
+                "bbox_ratio": [(0.5, 1.0), (0.0, 0.4)]  # x: 50-100%, y: 0-40%
+            },
+            "Fan Connector": {
+                "aspect_ratio_range": (0.8, 1.5),  # Square-ish
+                "area_range": (200, 2000),
+                "location_hint": "center_upper",
+                "bbox_ratio": [(0.3, 0.7), (0.1, 0.4)]
+            },
+            "Display Connector": {
+                "aspect_ratio_range": (2.0, 5.0),  # Long horizontal
+                "area_range": (1000, 8000),
+                "location_hint": "left_edge",
+                "bbox_ratio": [(0.0, 0.3), (0.3, 0.7)]
+            },
+            "USB Connector": {
+                "aspect_ratio_range": (0.3, 0.8),  # Vertical rectangle
+                "area_range": (300, 2000),
+                "location_hint": "right_edge",
+                "bbox_ratio": [(0.7, 1.0), (0.3, 0.7)]
+            },
+            "SATA Connector": {
+                "aspect_ratio_range": (1.5, 3.0),  # Medium horizontal
+                "area_range": (400, 3000),
+                "location_hint": "left_edge",
+                "bbox_ratio": [(0.0, 0.3), (0.5, 0.8)]
+            },
+            "Keyboard Connector": {
+                "aspect_ratio_range": (2.0, 4.0),  # Long horizontal
+                "area_range": (800, 5000),
+                "location_hint": "bottom_left",
+                "bbox_ratio": [(0.0, 0.4), (0.7, 1.0)]
+            },
+            "Power Connector": {
+                "aspect_ratio_range": (0.5, 1.5),  # Square to vertical
+                "area_range": (200, 1500),
+                "location_hint": "bottom_right",
+                "bbox_ratio": [(0.8, 1.0), (0.7, 1.0)]
+            },
+            "Battery Connector": {
+                "aspect_ratio_range": (0.8, 2.0),  # Square to horizontal
+                "area_range": (300, 2000),
+                "location_hint": "bottom_right",
+                "bbox_ratio": [(0.6, 0.9), (0.6, 0.9)]
+            },
+            "LED Connector": {
+                "aspect_ratio_range": (0.5, 1.5),  # Small square
+                "area_range": (100, 800),
+                "location_hint": "top_left",
+                "bbox_ratio": [(0.0, 0.2), (0.0, 0.2)]
+            },
+            "Audio Connector": {
+                "aspect_ratio_range": (0.8, 1.2),  # Circular/square
+                "area_range": (50, 500),
+                "location_hint": "top_right",
+                "bbox_ratio": [(0.85, 1.0), (0.0, 0.3)]
+            }
+        }
+        
+        mapped = []
+        used_detections = set()
+        
+        # Sort detections by confidence (highest first)
+        sorted_detections = sorted(detections, key=lambda x: x.get("confidence", 0), reverse=True)
+        
+        for comp_name, template in component_templates.items():
+            best_match = None
+            best_score = 0
+            
+            for idx, det in enumerate(sorted_detections):
+                if idx in used_detections:
+                    continue
+                
+                bbox = det.get("bbox", [])
+                if len(bbox) < 4:
+                    continue
+                
+                x1, y1, x2, y2 = bbox
+                det_width = x2 - x1
+                det_height = y2 - y1
+                area = det_width * det_height
+                aspect_ratio = det_width / det_height if det_height > 0 else 0
+                center_x = (x1 + x2) / 2
+                center_y = (y1 + y2) / 2
+                
+                # Check if detection matches template
+                score = 0
+                
+                # Check aspect ratio
+                if template["aspect_ratio_range"][0] <= aspect_ratio <= template["aspect_ratio_range"][1]:
+                    score += 0.3
+                
+                # Check area
+                if template["area_range"][0] <= area <= template["area_range"][1]:
+                    score += 0.3
+                
+                # Check location
+                width_norm = center_x / width if width > 0 else 0
+                height_norm = center_y / height if height > 0 else 0
+                bbox_x_range, bbox_y_range = template["bbox_ratio"]
+                
+                if bbox_x_range[0] <= width_norm <= bbox_x_range[1] and \
+                   bbox_y_range[0] <= height_norm <= bbox_y_range[1]:
+                    score += 0.4
+                
+                # Add confidence boost
+                score += det.get("confidence", 0) * 0.1
+                
+                if score > best_score:
+                    best_score = score
+                    best_match = (idx, det)
+            
+            if best_match and best_score > 0.4:  # Minimum threshold
+                idx, det = best_match
+                used_detections.add(idx)
+                
+                # Get component type
+                comp_type = self._get_component_subtype(comp_name)
+                if comp_type == "Unknown":
+                    comp_type = template.get("type", "Connector")
+                
+                mapped.append({
+                    "name": comp_name,
+                    "type": comp_type,
+                    "bbox": det["bbox"],
+                    "confidence": max(det.get("confidence", 0.7), best_score),
+                    "center": det.get("center", [(det["bbox"][0] + det["bbox"][2])/2, (det["bbox"][1] + det["bbox"][3])/2]),
+                    "location_description": self._get_location_description(comp_name, det["bbox"], width, height)
+                })
+        
+        return mapped
+    
+    def _get_location_description(self, comp_name: str, bbox: List[float], width: int, height: int) -> str:
+        """Generate location description based on bbox position"""
+        x1, y1, x2, y2 = bbox
+        center_x = (x1 + x2) / 2
+        center_y = (y1 + y2) / 2
+        
+        # Determine position
+        x_pos = "left" if center_x < width * 0.33 else "right" if center_x > width * 0.67 else "center"
+        y_pos = "top" if center_y < height * 0.33 else "bottom" if center_y > height * 0.67 else "middle"
+        
+        # Create description
+        if x_pos == "left" and y_pos == "top":
+            return "Top-left corner"
+        elif x_pos == "right" and y_pos == "top":
+            return "Top-right corner"
+        elif x_pos == "left" and y_pos == "bottom":
+            return "Bottom-left corner"
+        elif x_pos == "right" and y_pos == "bottom":
+            return "Bottom-right corner"
+        elif x_pos == "left":
+            return "Left edge, middle section"
+        elif x_pos == "right":
+            return "Right edge, middle section"
+        elif y_pos == "top":
+            return "Top edge, center section"
+        elif y_pos == "bottom":
+            return "Bottom edge, center section"
+        else:
+            return "Center area"
+    
+    def _ensure_all_connectors(self, mapped_components: List[Dict], width: int, height: int) -> List[Dict]:
+        """Ensure all expected connectors are present, fill missing ones with rule-based"""
+        expected_components = [
+            "LED Connector", "USB Connector", "RAM Slot", "Fan Connector",
+            "Display Connector", "Keyboard Connector", "Audio Connector",
+            "SATA Connector", "Power Connector", "Battery Connector"
+        ]
+        
+        found_names = {comp["name"] for comp in mapped_components}
+        missing = [name for name in expected_components if name not in found_names]
+        
+        # Get rule-based components for missing ones
+        rule_based = self._rule_based_detection((width, height))
+        rule_based_dict = {comp["name"]: comp for comp in rule_based}
+        
+        # Add missing components from rule-based
+        for name in missing:
+            if name in rule_based_dict:
+                mapped_components.append(rule_based_dict[name])
+        
+        # Sort by installation order (Battery last)
+        sorted_components = sorted(
+            mapped_components,
+            key=lambda x: 1 if "Battery" in x["name"] else 0
+        )
+        
+        return sorted_components
     
     def _map_detections_to_components(self, results, image_size) -> List[Dict]:
         """Map generic detections to motherboard-specific components"""
-        # Always use rule-based detection to ensure ALL connectors are detected
-        # This ensures we get all 10 connectors: LED, USB, RAM, Fan, Display, Keyboard, Battery, Power, Audio, SATA
-        components = self._rule_based_detection(image_size)
-        return components
+        # This method is kept for backward compatibility
+        width, height = image_size if isinstance(image_size, tuple) else (800, 600)
+        return self._rule_based_detection((width, height))
     
     def _get_component_subtype(self, component_name: str) -> str:
         """Get specific subtype for component"""
