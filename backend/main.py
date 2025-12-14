@@ -78,6 +78,7 @@ async def get_system_status():
     Get comprehensive system status including all agents and models
     """
     import torch
+    import sys
     from config import VISION_MODEL, LANGUAGE_MODEL, HUGGINGFACE_API_KEY
     
     status = {
@@ -212,21 +213,63 @@ async def get_system_status():
         }
     }
     
-    # System Information
+    # System Information - Check CUDA availability directly
     try:
+        # Direct CUDA check
+        cuda_available = torch.cuda.is_available()
+        pytorch_available = True
+        torch_version = torch.__version__
+        
+        if cuda_available:
+            try:
+                cuda_device_name = torch.cuda.get_device_name(0)
+                cuda_version = torch.version.cuda if hasattr(torch.version, 'cuda') else 'N/A'
+            except:
+                cuda_device_name = "CUDA Device"
+                cuda_version = 'N/A'
+        else:
+            cuda_device_name = None
+            cuda_version = None
+    except Exception as e:
+        # If torch import fails, try alternative check
         pytorch_available = 'torch' in sys.modules
-        cuda_available = torch.cuda.is_available() if pytorch_available else False
-        torch_version = torch.__version__ if pytorch_available else 'N/A'
-    except:
-        pytorch_available = False
-        cuda_available = False
-        torch_version = 'N/A'
+        if pytorch_available:
+            try:
+                cuda_available = torch.cuda.is_available()
+                torch_version = torch.__version__
+                if cuda_available:
+                    cuda_device_name = torch.cuda.get_device_name(0)
+                    cuda_version = torch.version.cuda if hasattr(torch.version, 'cuda') else 'N/A'
+                else:
+                    cuda_device_name = None
+                    cuda_version = None
+            except:
+                cuda_available = False
+                torch_version = 'N/A'
+                cuda_device_name = None
+                cuda_version = None
+        else:
+            cuda_available = False
+            torch_version = 'N/A'
+            cuda_device_name = None
+            cuda_version = None
+    
+    # Get device from vision agent - it should already be set to "cuda" if CUDA is available
+    vision_device = orchestrator.vision_agent.device if hasattr(orchestrator.vision_agent, 'device') else "cpu"
+    
+    # Ensure device matches CUDA availability
+    if vision_device == "cuda" and not cuda_available:
+        vision_device = "cpu"
+    elif vision_device == "cpu" and cuda_available:
+        vision_device = "cuda"
     
     status["system"] = {
         "python_version": torch_version,
         "pytorch_available": pytorch_available,
         "cuda_available": cuda_available,
-        "device": orchestrator.vision_agent.device if hasattr(orchestrator.vision_agent, 'device') else "cpu"
+        "cuda_device_name": cuda_device_name,
+        "cuda_version": cuda_version,
+        "device": vision_device
     }
     
     # Calculate overall health

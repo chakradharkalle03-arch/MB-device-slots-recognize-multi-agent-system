@@ -609,7 +609,7 @@
                             <p>Loading equipment data...</p>
                         </div>
 
-                        <div id="equipmentDashboard" class="results">
+                        <div id="equipmentDashboard" class="results" style="display: none;">
                             <div class="result-section">
                                 <h3>📊 Equipment Summary</h3>
                                 <div id="equipmentSummary"></div>
@@ -735,8 +735,12 @@
                 html += `<h3 style="color: #1a237e; margin-top: 30px; margin-bottom: 15px;">💻 System Information</h3>`;
                 html += `<div style="background: white; padding: 15px; border-radius: 8px;">`;
                 const system = data.system || {};
-                html += `<p style="margin: 5px 0;"><strong>Device:</strong> ${system.device || 'N/A'}</p>`;
+                html += `<p style="margin: 5px 0;"><strong>Device:</strong> <span style="color: ${system.device === 'cuda' ? '#4caf50' : '#666'}; font-weight: bold;">${system.device || 'N/A'}</span></p>`;
                 html += `<p style="margin: 5px 0;"><strong>CUDA Available:</strong> <span style="color: ${system.cuda_available ? '#4caf50' : '#666'}">${system.cuda_available ? 'Yes' : 'No'}</span></p>`;
+                if (system.cuda_available && system.cuda_device_name) {
+                    html += `<p style="margin: 5px 0;"><strong>CUDA Device:</strong> <span style="color: #4caf50;">${system.cuda_device_name}</span></p>`;
+                    html += `<p style="margin: 5px 0;"><strong>CUDA Version:</strong> ${system.cuda_version || 'N/A'}</p>`;
+                }
                 html += `<p style="margin: 5px 0;"><strong>PyTorch Available:</strong> <span style="color: ${system.pytorch_available ? '#4caf50' : '#666'}">${system.pytorch_available ? 'Yes' : 'No'}</span></p>`;
                 html += `</div>`;
 
@@ -1177,9 +1181,21 @@
         }
 
         // Equipment Monitoring Handlers
-        document.getElementById('loadDashboardBtn').addEventListener('click', async () => {
-            document.getElementById('equipmentLoading').classList.add('active');
-            document.getElementById('equipmentDashboard').classList.remove('active');
+        let equipmentDashboardLoaded = false;
+        let equipmentLoadingInProgress = false;
+
+        async function loadEquipmentDashboard() {
+            // Prevent multiple simultaneous loads
+            if (equipmentLoadingInProgress) {
+                return;
+            }
+
+            equipmentLoadingInProgress = true;
+            const loadingEl = document.getElementById('equipmentLoading');
+            const dashboardEl = document.getElementById('equipmentDashboard');
+
+            loadingEl.classList.add('active');
+            dashboardEl.classList.remove('active');
 
             try {
                 const response = await fetch(`${BACKEND_URL}/api/equipment/dashboard`);
@@ -1190,18 +1206,21 @@
                 }
 
                 displayEquipmentDashboard(data);
-                document.getElementById('equipmentDashboard').classList.add('active');
+                dashboardEl.style.display = 'block';
+                dashboardEl.classList.add('active');
+                equipmentDashboardLoaded = true;
 
             } catch (error) {
+                console.error('Equipment dashboard error:', error);
                 alert('Error: ' + error.message);
             } finally {
-                document.getElementById('equipmentLoading').classList.remove('active');
+                loadingEl.classList.remove('active');
+                equipmentLoadingInProgress = false;
             }
-        });
+        }
 
-        document.getElementById('refreshEquipmentBtn').addEventListener('click', async () => {
-            document.getElementById('loadDashboardBtn').click();
-        });
+        document.getElementById('loadDashboardBtn').addEventListener('click', loadEquipmentDashboard);
+        document.getElementById('refreshEquipmentBtn').addEventListener('click', loadEquipmentDashboard);
 
         function displayEquipmentDashboard(data) {
             // Summary
@@ -1265,13 +1284,14 @@
             }
         }
 
-        // Load dashboard on equipment tab activation
+        // Load dashboard on equipment tab activation (only if not already loaded)
         document.getElementById('equipment-tab').addEventListener('click', () => {
             setTimeout(() => {
-                if (document.getElementById('equipment-tab').classList.contains('active')) {
-                    document.getElementById('loadDashboardBtn').click();
+                const tab = document.getElementById('equipment-tab');
+                if (tab.classList.contains('active') && !equipmentDashboardLoaded && !equipmentLoadingInProgress) {
+                    loadEquipmentDashboard();
                 }
-            }, 100);
+            }, 200);
         });
     </script>
 </body>
