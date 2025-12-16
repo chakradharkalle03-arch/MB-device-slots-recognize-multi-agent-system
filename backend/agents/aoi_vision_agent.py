@@ -203,8 +203,15 @@ class AOIVisionAgent:
         
         return {
             "defects": defects,
-            "status": pass_fail_status["status"],
+            "status": pass_fail_status["status"],  # PASS or HOLD (never FAIL from AI)
             "confidence": pass_fail_status["confidence"],
+            "decision_info": {
+                "decision_reason": pass_fail_status.get("decision_reason", "LOW_RISK"),
+                "requires_manual_aoi": pass_fail_status.get("requires_manual_aoi", False),
+                "requires_axi": pass_fail_status.get("requires_axi", False),
+                "ai_decision_only": pass_fail_status.get("ai_decision_only", True),
+                "production_note": pass_fail_status.get("production_note", "")
+            },
             "total_defects": len(defects),
             "critical_defects": len([d for d in defects if d.get("severity") == "Critical"]),
             "image_size": (width, height),
@@ -219,12 +226,16 @@ class AOIVisionAgent:
         else:
             width, height = 800, 600
         
+        # Production-safe simulated defects (RGB AOI can detect these)
+        # REMOVED: Solder Void (requires X-ray/AXI, not detectable from RGB)
         simulated_defects = [
-            {"type": "Excess Solder", "confidence": 0.75, "severity": "Medium", "area": 2500},
-            {"type": "Scratch/Mark", "confidence": 0.45, "severity": "Low", "area": 600},  # Will be filtered (low confidence < 0.65)
-            {"type": "Component Misalignment", "confidence": 0.68, "severity": "High", "area": 3200},
-            {"type": "Solder Void", "confidence": 0.55, "severity": "Medium", "area": 1800},
-            {"type": "Scratch/Mark", "confidence": 0.52, "severity": "Low", "area": 500},  # Will be filtered (low confidence < 0.65)
+            {"type": "Excess Solder", "confidence": 0.78, "severity": "Medium", "area": 2500},  # RGB-detectable
+            {"type": "Scratch/Mark", "confidence": 0.45, "severity": "Low", "area": 600},  # Filter (low confidence, high FP risk)
+            {"type": "Solder Bridge", "confidence": 0.82, "severity": "High", "area": 2800},  # RGB-detectable (visual bridge)
+            {"type": "Scratch/Mark", "confidence": 0.48, "severity": "Low", "area": 500},  # Filter (low confidence, high FP risk)
+            {"type": "Excess Solder", "confidence": 0.52, "severity": "Low", "area": 800},  # Filter (low confidence, high FP risk)
+            {"type": "Missing Component", "confidence": 0.88, "severity": "Critical", "area": 3500},  # RGB-detectable
+            {"type": "Tombstone", "confidence": 0.75, "severity": "High", "area": 2200},  # RGB-detectable (component standing)
         ]
         
         for sim_defect in simulated_defects:
@@ -271,27 +282,70 @@ class AOIVisionAgent:
             return "Medium"
     
     def _determine_pass_fail(self, defects: List[Dict]) -> Dict[str, Any]:
-        """Determine pass/fail status based on defects"""
+        """
+        Determine inspection status based on defects
+        PRODUCTION-SAFE: AI can only assign PASS or HOLD, never FAIL
+        FAIL can only be issued after human verification and IPC-A-610 compliance check
+        """
         critical_count = len([d for d in defects if d.get("severity") == "Critical"])
         high_count = len([d for d in defects if d.get("severity") == "High"])
         total_count = len(defects)
         
+        # Production-safe decision logic:
+        # AI can only assign PASS or HOLD (for human verification)
+        # FAIL requires human confirmation + IPC-A-610 compliance
+        
         if critical_count > 0:
-            status = "FAIL"
+            # Critical defects detected - HOLD for manual verification
+            status = "HOLD"
+            decision_reason = "CRITICAL_RISK_DETECTED"
             confidence = 0.95
+            requires_manual_aoi = True
+            requires_axi = False  # May need X-ray for confirmation
         elif high_count >= 2:
-            status = "FAIL"
+            # Multiple high-severity defects - HOLD for verification
+            status = "HOLD"
+            decision_reason = "MULTIPLE_HIGH_RISK_DEFECTS"
             confidence = 0.85
+            requires_manual_aoi = True
+            requires_axi = False
+        elif high_count >= 1:
+            # Single high-severity defect - HOLD for verification
+            status = "HOLD"
+            decision_reason = "HIGH_RISK_DEFECT_DETECTED"
+            confidence = 0.80
+            requires_manual_aoi = True
+            requires_axi = False
         elif total_count >= 5:
-            status = "REVIEW"
+            # Multiple defects - HOLD for review
+            status = "HOLD"
+            decision_reason = "MULTIPLE_DEFECTS_DETECTED"
             confidence = 0.75
+            requires_manual_aoi = True
+            requires_axi = False
+        elif total_count >= 3:
+            # Moderate defect count - HOLD for verification
+            status = "HOLD"
+            decision_reason = "DEFECTS_REQUIRE_VERIFICATION"
+            confidence = 0.70
+            requires_manual_aoi = True
+            requires_axi = False
         else:
+            # Low defect count - PASS (but still flagged for review)
             status = "PASS"
+            decision_reason = "LOW_RISK"
             confidence = 0.90
+            requires_manual_aoi = total_count > 0  # Review if any defects
+            requires_axi = False
         
         return {
             "status": status,
-            "confidence": confidence
+            "decision_reason": decision_reason,
+            "confidence": confidence,
+            "requires_manual_aoi": requires_manual_aoi,
+            "requires_axi": requires_axi,
+            "ai_decision_only": True,  # Flag that this is AI-only, not final QA
+            "production_note": "AI-assisted inspection. Final decision requires human verification per IPC-A-610 standards."
         }
     
     def annotate_image(self, image_path: str, defects: List[Dict], output_path: str):
