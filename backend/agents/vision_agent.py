@@ -1,6 +1,7 @@
 """
 Vision Agent - Detects and localizes motherboard components using Hugging Face models
 """
+import os
 import torch
 import warnings
 from transformers import AutoImageProcessor, AutoModelForObjectDetection
@@ -115,7 +116,8 @@ class VisionAgent:
                         "bbox": [float(x1), float(y1), float(x2), float(y2)],
                         "confidence": float(score),
                         "label": int(label),
-                        "center": [float((x1 + x2) / 2), float((y1 + y2) / 2)]
+                        "center": [float((x1 + x2) / 2), float((y1 + y2) / 2)],
+                        "detection_source": "detr_real"  # Mark as real DETR detection
                     })
             return detections
         except Exception as e:
@@ -155,24 +157,24 @@ class VisionAgent:
         for contour in all_contours:
             area = cv2.contourArea(contour)
             # Filter by size - connectors are typically medium-sized rectangles
-            # Adjusted for motherboard scale
-            if 200 < area < 80000:  # Wider range for different image sizes
+            # More selective range for better accuracy
+            if 300 < area < 50000:  # More selective range
                 x, y, w, h = cv2.boundingRect(contour)
                 
                 # Skip if too small or too large relative to image
-                if w < 10 or h < 10 or w > width * 0.8 or h > height * 0.8:
+                if w < 15 or h < 15 or w > width * 0.7 or h > height * 0.7:
                     continue
                 
-                # Create a unique key for this box to avoid duplicates
-                box_key = (x // 10, y // 10, w // 10, h // 10)
+                # Create a unique key for this box to avoid duplicates (more precise)
+                box_key = (x // 5, y // 5, w // 5, h // 5)
                 if box_key in seen_boxes:
                     continue
                 seen_boxes.add(box_key)
                 
                 aspect_ratio = w / h if h > 0 else 0
                 
-                # Connectors are typically rectangular (aspect ratio 0.2-8.0)
-                if 0.2 <= aspect_ratio <= 8.0:
+                # Connectors are typically rectangular (more selective range)
+                if 0.3 <= aspect_ratio <= 6.0:  # More selective
                     # Check if it looks like a connector (rectangular shape)
                     rect_area = w * h
                     extent = area / rect_area if rect_area > 0 else 0
@@ -180,13 +182,19 @@ class VisionAgent:
                     # Connectors typically have 40-90% fill
                     if extent > 0.3:  # Lowered threshold for better detection
                         # Calculate confidence based on how well it matches connector characteristics
-                        confidence = min(0.85, 0.5 + extent * 0.35)
+                        # Higher confidence for medium-sized, well-proportioned rectangles
+                        size_score = min(1.0, area / 5000)  # Normalize by typical connector size
+                        aspect_score = 1.0 - abs(aspect_ratio - 2.0) / 4.0  # Prefer aspect ratio around 2.0
+                        aspect_score = max(0.3, aspect_score)  # Minimum score
+                        confidence = 0.60 + (size_score * 0.2) + (aspect_score * 0.2)
+                        confidence = min(0.95, confidence)  # Cap at 95%
                         
                         detections.append({
                             "bbox": [float(x), float(y), float(x + w), float(y + h)],
                             "confidence": confidence,
                             "type": "connector",
                             "center": [float(x + w/2), float(y + h/2)],
+                            "detection_source": "cv_real",  # Mark as real CV detection
                             "area": area,
                             "aspect_ratio": aspect_ratio
                         })
@@ -222,7 +230,8 @@ class VisionAgent:
                         "confidence": 0.70,
                         "type": "circular_connector",
                         "center": [float(x), float(y)],
-                        "radius": float(r)
+                        "radius": float(r),
+                        "detection_source": "cv_real"  # Mark as real CV detection
                     })
         
         return detections
@@ -364,7 +373,8 @@ class VisionAgent:
                     "bbox": det["bbox"],
                     "confidence": max(det.get("confidence", 0.7), best_score),
                     "center": det.get("center", [(det["bbox"][0] + det["bbox"][2])/2, (det["bbox"][1] + det["bbox"][3])/2]),
-                    "location_description": self._get_location_description(comp_name, det["bbox"], width, height)
+                    "location_description": self._get_location_description(comp_name, det["bbox"], width, height),
+                    "detection_source": "real"  # Mark as real detection from image analysis
                 })
         
         return mapped
@@ -400,28 +410,37 @@ class VisionAgent:
             return "Center area"
     
     def _ensure_all_connectors(self, mapped_components: List[Dict], width: int, height: int) -> List[Dict]:
-        """Ensure all expected connectors are present, fill missing ones with rule-based"""
+        """
+        Return ONLY real detections - NO rule-based fallbacks
+        This ensures annotation shows only actual components detected from image
+        """
+        # Filter to only real detections (NO rule-based fallbacks)
+        real_only_components = [
+            comp for comp in mapped_components
+            if comp.get("detection_source") in ["real", "cv_real", "detr_real"]
+            and comp.get("detection_source") != "rule_based"
+        ]
+        
+        # Log what was detected vs what would be rule-based (for debugging)
         expected_components = [
             "LED Connector", "USB Connector", "RAM Slot", "Fan Connector",
             "Display Connector", "Keyboard Connector", "Audio Connector",
             "SATA Connector", "Power Connector", "Battery Connector"
         ]
-        
-        found_names = {comp["name"] for comp in mapped_components}
+        found_names = {comp["name"] for comp in real_only_components}
         missing = [name for name in expected_components if name not in found_names]
         
-        # Get rule-based components for missing ones
-        rule_based = self._rule_based_detection((width, height))
-        rule_based_dict = {comp["name"]: comp for comp in rule_based}
+        if missing:
+            print(f"📊 Real detections: {len(real_only_components)} components")
+            print(f"📊 Missing (not detected in image): {len(missing)} components")
+            print(f"   Missing: {', '.join(missing)}")
+            print(f"⚠️ These components will NOT appear (not detected in actual image)")
+        else:
+            print(f"✅ All expected components detected from image: {len(real_only_components)}")
         
-        # Add missing components from rule-based
-        for name in missing:
-            if name in rule_based_dict:
-                mapped_components.append(rule_based_dict[name])
-        
-        # Sort by installation order (Battery last)
+        # Sort by installation order (Battery last) - but only real detections
         sorted_components = sorted(
-            mapped_components,
+            real_only_components,
             key=lambda x: 1 if "Battery" in x["name"] else 0
         )
         
@@ -547,26 +566,207 @@ class VisionAgent:
             "status": "fallback"
         }
     
-    def annotate_image(self, image_path: str, components: List[Dict], output_path: str):
-        """Annotate image with bounding boxes"""
+    def annotate_image(self, image_path: str, components: List[Dict], output_path: str) -> str:
+        """
+        Annotate image with bounding boxes - Only shows REAL detections from image analysis
+        ALWAYS returns a valid image path (even if no components detected)
+        """
+        # Load original image
         image = cv2.imread(image_path)
+        if image is None:
+            print(f"❌ Error: Could not load image from {image_path}")
+            # Return output_path anyway so frontend can try to load it
+            return output_path
+        
         image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        height, width = image_rgb.shape[:2]
+        
+        # Color scheme: Green for real detections, Yellow for rule-based (if shown)
+        real_detection_color = (0, 255, 0)  # Green
+        rule_based_color = (255, 255, 0)    # Yellow (dashed)
+        
+        # Annotate ALL components that have valid bboxes (except explicitly rule-based)
+        # Include components from DETR, Computer Vision, or any detection with bbox
+        components_to_annotate = []
+        rule_based_count = 0
         
         for comp in components:
-            bbox = comp["bbox"]
-            x1, y1, x2, y2 = [int(coord) for coord in bbox]
+            # Skip if explicitly marked as rule-based
+            if comp.get("detection_source") == "rule_based":
+                rule_based_count += 1
+                continue
             
-            # Draw bounding box
-            cv2.rectangle(image_rgb, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            
-            # Add label
-            label = f"{comp['name']} ({comp['confidence']:.2f})"
-            cv2.putText(
-                image_rgb, label, (x1, y1 - 10),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2
-            )
+            # Include if it has a valid bbox
+            if "bbox" in comp and len(comp.get("bbox", [])) == 4:
+                # Check if bbox has valid coordinates
+                bbox = comp["bbox"]
+                if all(isinstance(coord, (int, float)) for coord in bbox):
+                    components_to_annotate.append(comp)
         
-        # Save annotated image
-        cv2.imwrite(output_path, cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR))
+        print(f"📊 Components to annotate: {len(components_to_annotate)}")
+        print(f"📊 Rule-based components (excluded): {rule_based_count}")
+        
+        # If no components to annotate, show original image with message
+        if not components_to_annotate:
+            print(f"⚠️ No components with valid bounding boxes found")
+            print(f"⚠️ Showing original image without annotations")
+        
+        # Draw bounding boxes and labels for all components
+        for comp in components_to_annotate:
+            try:
+                bbox = comp["bbox"]
+                if len(bbox) != 4:
+                    print(f"⚠️ Component {comp.get('name', 'Unknown')} has invalid bbox: {bbox}")
+                    continue
+                    
+                x1, y1, x2, y2 = [int(float(coord)) for coord in bbox]
+                
+                # Validate bbox coordinates are within image bounds
+                x1 = max(0, min(x1, width - 1))
+                y1 = max(0, min(y1, height - 1))
+                x2 = max(x1 + 1, min(x2, width))
+                y2 = max(y1 + 1, min(y2, height))
+                
+                # Skip if bbox is invalid
+                if x2 <= x1 or y2 <= y1:
+                    print(f"⚠️ Component {comp.get('name', 'Unknown')} has invalid bbox dimensions")
+                    continue
+                
+                # Use bright green for all real detections (highly visible)
+                color = (0, 255, 0)  # Bright green in RGB
+                line_thickness = 3  # Thicker lines for better visibility
+                
+                # Draw bounding box (thick, bright green)
+                cv2.rectangle(image_rgb, (x1, y1), (x2, y2), color, line_thickness)
+                
+                # Add label with component name and confidence
+                comp_name = comp.get("name", "Unknown")
+                confidence = comp.get("confidence", 0)
+                label = f"{comp_name}"
+                if confidence > 0:
+                    label += f" ({confidence:.0%})"
+                
+                # Use larger font for better visibility
+                font_scale = 0.7
+                font_thickness = 2
+                font = cv2.FONT_HERSHEY_SIMPLEX
+                
+                # Get text size
+                (text_width, text_height), baseline = cv2.getTextSize(
+                    label, font, font_scale, font_thickness
+                )
+                
+                # Position label above bounding box (or inside if too close to top)
+                label_y = max(y1 - 10, text_height + 10)
+                label_x = x1
+                
+                # Ensure label doesn't go off screen
+                if label_x + text_width > width:
+                    label_x = width - text_width - 5
+                
+                # Draw semi-transparent background for label (better visibility)
+                overlay = image_rgb.copy()
+                cv2.rectangle(
+                    overlay,
+                    (label_x - 5, label_y - text_height - 5),
+                    (label_x + text_width + 5, label_y + 5),
+                    (0, 0, 0),  # Black background
+                    -1
+                )
+                cv2.addWeighted(overlay, 0.7, image_rgb, 0.3, 0, image_rgb)
+                
+                # Draw text in bright white (high contrast)
+                cv2.putText(
+                    image_rgb, label, (label_x, label_y),
+                    font, font_scale, (255, 255, 255), font_thickness
+                )
+                
+                print(f"✅ Annotated: {comp_name} at ({x1},{y1})-({x2},{y2})")
+                
+            except Exception as e:
+                print(f"❌ Error annotating component {comp.get('name', 'Unknown')}: {e}")
+                import traceback
+                traceback.print_exc()
+                continue
+        
+        # Save annotated image (always save original image, with real detections if found)
+        try:
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            
+            # If no components detected, show original image with informative message
+            if len(components_to_annotate) == 0:
+                # Add informative text overlay
+                text = "No components detected from image analysis"
+                text2 = "Original image shown (no annotations)"
+                
+                # Get text size for centering
+                font = cv2.FONT_HERSHEY_SIMPLEX
+                font_scale = 0.8
+                thickness = 2
+                (text_width1, text_height1), _ = cv2.getTextSize(text, font, font_scale, thickness)
+                (text_width2, text_height2), _ = cv2.getTextSize(text2, font, font_scale, thickness)
+                
+                # Center text
+                x1 = (width - text_width1) // 2
+                x2 = (width - text_width2) // 2
+                y1 = height // 2 - 20
+                y2 = height // 2 + 20
+                
+                # Add semi-transparent background for text
+                overlay = image_rgb.copy()
+                cv2.rectangle(overlay, (x1 - 10, y1 - text_height1 - 10), 
+                            (x2 + text_width2 + 10, y2 + text_height2 + 10), 
+                            (0, 0, 0), -1)
+                cv2.addWeighted(overlay, 0.6, image_rgb, 0.4, 0, image_rgb)
+                
+                # Draw text
+                cv2.putText(image_rgb, text, (x1, y1), font, font_scale, (255, 255, 255), thickness)
+                cv2.putText(image_rgb, text2, (x2, y2), font, font_scale, (200, 200, 200), thickness)
+                
+                print(f"⚠️ No components detected - showing original image")
+            else:
+                print(f"✅ Annotated {len(components_to_annotate)} components with bounding boxes and labels")
+            
+            # Convert RGB to BGR for OpenCV saving
+            image_bgr = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
+            
+            # Save as PNG for better quality
+            success = cv2.imwrite(output_path, image_bgr)
+            
+            if success:
+                print(f"✅ Annotated image saved successfully to {output_path}")
+                
+                # Verify file was created
+                if os.path.exists(output_path):
+                    file_size = os.path.getsize(output_path)
+                    print(f"✅ Image file verified: {file_size} bytes")
+                    
+                    # Additional verification: try to read it back
+                    test_read = cv2.imread(output_path)
+                    if test_read is not None:
+                        h, w = test_read.shape[:2]
+                        print(f"✅ Image verified: {w}x{h} pixels, {len(components_to_annotate)} components annotated")
+                    else:
+                        print(f"⚠️ Warning: Saved image could not be read back")
+                else:
+                    print(f"❌ ERROR: Image file was not created at {output_path}")
+            else:
+                print(f"❌ ERROR: cv2.imwrite() returned False - image not saved!")
+                # Try alternative save method
+                try:
+                    from PIL import Image as PILImage
+                    pil_image = PILImage.fromarray(image_rgb)
+                    pil_image.save(output_path, 'PNG')
+                    print(f"✅ Saved using PIL as fallback")
+                except Exception as e2:
+                    print(f"❌ PIL fallback also failed: {e2}")
+                
+        except Exception as e:
+            print(f"❌ Error saving annotated image: {e}")
+            import traceback
+            traceback.print_exc()
+            # Ensure we still return the path even if save failed
+            # Frontend can try to load it
+        
         return output_path
 

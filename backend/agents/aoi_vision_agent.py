@@ -60,28 +60,22 @@ class AOIVisionAgent:
         try:
             image = Image.open(image_path).convert("RGB")
             
-            if self.model_type == "yolov8":
-                results = self.model(image)
-                defects = self._parse_yolo_results(results, image.size)
-                # Add simulated defects for demo
-                defects = self._add_simulated_defects_for_demo(defects, image.size)
-            else:
-                # DETR-based detection
-                inputs = self.processor(images=image, return_tensors="pt")
-                inputs = {k: v.to(self.device) for k, v in inputs.items()}
-                
-                with torch.no_grad():
-                    outputs = self.model(**inputs)
-                
-                target_sizes = torch.tensor([image.size[::-1]]).to(self.device)
-                results = self.processor.post_process_object_detection(
-                    outputs, threshold=0.3, target_sizes=target_sizes
-                )[0]
-                
-                defects = self._parse_detr_results(results, image.size)
+            # IMPORTANT: DETR/YOLO models are NOT trained for PCB defect detection
+            # They detect general objects (COCO dataset), not PCB defects
+            # Always use REAL computer vision analysis for actual defect detection
+            print("📊 Using REAL computer vision analysis for PCB defect detection...")
+            print("⚠️ Note: DETR/YOLO models detect general objects, not PCB defects")
+            print("✅ Using CV analysis based on actual image features")
             
-            # Add simulated defects for demo (ensures false positive reduction is visible)
-            defects = self._add_simulated_defects_for_demo(defects, image.size)
+            defects = self._detect_defects_with_computer_vision(image_path)
+            
+            # Log real detection results
+            if len(defects) > 0:
+                print(f"✅ Real defects detected from image analysis: {len(defects)}")
+                for defect in defects:
+                    print(f"   - {defect['type']} (confidence: {defect['confidence']:.2f}, source: {defect.get('detection_source', 'cv_real')})")
+            else:
+                print("✅ No defects detected in image (board appears clean)")
             
             # Determine pass/fail
             pass_fail_status = self._determine_pass_fail(defects)
@@ -93,7 +87,7 @@ class AOIVisionAgent:
                 "total_defects": len(defects),
                 "critical_defects": len([d for d in defects if d.get("severity") == "Critical"]),
                 "image_size": image.size,
-                "detection_method": self.model_type
+                "detection_method": "cv_real"  # Always use real CV analysis, not DETR/YOLO
             }
         except Exception as e:
             print(f"AOI detection error: {e}")
@@ -154,50 +148,10 @@ class AOIVisionAgent:
                 "detection_method": "rule_based"
             }
         
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        height, width = gray.shape
+        height, width = image.shape[:2]
         
-        # Simulate defect detection using image analysis
-        defects = []
-        
-        # Check for common defects
-        # 1. Solder bridges (bright spots)
-        _, thresh = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY)
-        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        for contour in contours:
-            area = cv2.contourArea(contour)
-            if 50 < area < 5000:  # Reasonable defect size
-                x, y, w, h = cv2.boundingRect(contour)
-                defects.append({
-                    "type": "Solder Bridge",
-                    "bbox": [float(x), float(y), float(x + w), float(y + h)],
-                    "confidence": 0.75,
-                    "severity": "Medium",
-                    "area": float(area)
-                })
-        
-        # 2. Missing components (dark regions)
-        _, thresh_dark = cv2.threshold(gray, 50, 255, cv2.THRESH_BINARY_INV)
-        contours_dark, _ = cv2.findContours(thresh_dark, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        for contour in contours_dark:
-            area = cv2.contourArea(contour)
-            if 100 < area < 10000:
-                x, y, w, h = cv2.boundingRect(contour)
-                defects.append({
-                    "type": "Missing Component",
-                    "bbox": [float(x), float(y), float(x + w), float(y + h)],
-                    "confidence": 0.70,
-                    "severity": "Critical",
-                    "area": float(area)
-                })
-        
-        # Add simulated defects for demo (ensures false positive reduction is visible)
-        defects = self._add_simulated_defects_for_demo(defects, (width, height))
-        
-        # Limit to reasonable number
-        defects = defects[:10]
+        # Use REAL computer vision analysis (no simulated defects)
+        defects = self._detect_defects_with_computer_vision(image_path)
         
         pass_fail_status = self._determine_pass_fail(defects)
         
@@ -215,42 +169,125 @@ class AOIVisionAgent:
             "total_defects": len(defects),
             "critical_defects": len([d for d in defects if d.get("severity") == "Critical"]),
             "image_size": (width, height),
-            "detection_method": "rule_based"
+            "detection_method": "cv_real"  # Always use real CV analysis
         }
     
-    def _add_simulated_defects_for_demo(self, defects: List[Dict], image_size) -> List[Dict]:
-        """Add simulated defects for demo to show false positive reduction"""
-        import random
-        if isinstance(image_size, tuple):
-            width, height = image_size
-        else:
-            width, height = 800, 600
+    def _detect_defects_with_computer_vision(self, image_path: str) -> List[Dict]:
+        """
+        REAL defect detection using computer vision techniques
+        NO simulated defects - only actual image analysis
+        """
+        image = cv2.imread(image_path)
+        if image is None:
+            return []
         
-        # Production-safe simulated defects (RGB AOI can detect these)
-        # REMOVED: Solder Void (requires X-ray/AXI, not detectable from RGB)
-        simulated_defects = [
-            {"type": "Excess Solder", "confidence": 0.78, "severity": "Medium", "area": 2500},  # RGB-detectable
-            {"type": "Scratch/Mark", "confidence": 0.45, "severity": "Low", "area": 600},  # Filter (low confidence, high FP risk)
-            {"type": "Solder Bridge", "confidence": 0.82, "severity": "High", "area": 2800},  # RGB-detectable (visual bridge)
-            {"type": "Scratch/Mark", "confidence": 0.48, "severity": "Low", "area": 500},  # Filter (low confidence, high FP risk)
-            {"type": "Excess Solder", "confidence": 0.52, "severity": "Low", "area": 800},  # Filter (low confidence, high FP risk)
-            {"type": "Missing Component", "confidence": 0.88, "severity": "Critical", "area": 3500},  # RGB-detectable
-            {"type": "Tombstone", "confidence": 0.75, "severity": "High", "area": 2200},  # RGB-detectable (component standing)
-        ]
+        defects = []
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        height, width = gray.shape
         
-        for sim_defect in simulated_defects:
-            x = random.randint(50, max(150, width - 100))
-            y = random.randint(50, max(150, height - 100))
-            w = random.randint(30, 80)
-            h = random.randint(30, 80)
-            defects.append({
-                "type": sim_defect["type"],
-                "bbox": [float(x), float(y), float(x + w), float(y + h)],
-                "confidence": sim_defect["confidence"],
-                "severity": sim_defect["severity"],
-                "area": float(sim_defect["area"])
-            })
+        # 1. Detect solder bridges (bright connected regions)
+        _, thresh_bright = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY)
+        contours_bright, _ = cv2.findContours(thresh_bright, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
+        for contour in contours_bright:
+            area = cv2.contourArea(contour)
+            if 100 < area < 5000:  # Reasonable defect size
+                x, y, w, h = cv2.boundingRect(contour)
+                # Check if it looks like a bridge (elongated shape)
+                aspect_ratio = max(w, h) / max(min(w, h), 1)
+                if aspect_ratio > 2.0:  # Bridge-like shape
+                    defects.append({
+                        "type": "Solder Bridge",
+                        "bbox": [float(x), float(y), float(x + w), float(y + h)],
+                        "confidence": min(0.75 + (area / 5000), 0.90),
+                        "severity": "High",
+                        "area": float(area),
+                        "detection_source": "cv_real"
+                    })
+        
+        # 2. Detect excess solder (bright blobs)
+        _, thresh_excess = cv2.threshold(gray, 180, 255, cv2.THRESH_BINARY)
+        contours_excess, _ = cv2.findContours(thresh_excess, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        for contour in contours_excess:
+            area = cv2.contourArea(contour)
+            if 200 < area < 3000:
+                x, y, w, h = cv2.boundingRect(contour)
+                # Check if it's a blob (not elongated)
+                aspect_ratio = max(w, h) / max(min(w, h), 1)
+                if aspect_ratio < 2.0:  # Blob-like shape
+                    defects.append({
+                        "type": "Excess Solder",
+                        "bbox": [float(x), float(y), float(x + w), float(y + h)],
+                        "confidence": min(0.70 + (area / 3000), 0.85),
+                        "severity": "Medium",
+                        "area": float(area),
+                        "detection_source": "cv_real"
+                    })
+        
+        # 3. Detect missing components (dark rectangular regions where components should be)
+        # Look for dark regions with component-like shapes
+        _, thresh_dark = cv2.threshold(gray, 80, 255, cv2.THRESH_BINARY_INV)
+        contours_dark, _ = cv2.findContours(thresh_dark, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        for contour in contours_dark:
+            area = cv2.contourArea(contour)
+            if 500 < area < 8000:  # Component-sized
+                x, y, w, h = cv2.boundingRect(contour)
+                # Check if it's rectangular (component-like)
+                rect_area = w * h
+                extent = area / max(rect_area, 1)
+                if extent > 0.6:  # Relatively rectangular
+                    defects.append({
+                        "type": "Missing Component",
+                        "bbox": [float(x), float(y), float(x + w), float(y + h)],
+                        "confidence": min(0.75 + (area / 8000), 0.90),
+                        "severity": "Critical",
+                        "area": float(area),
+                        "detection_source": "cv_real"
+                    })
+        
+        # 4. Detect tombstone (component standing on edge - detected by edge analysis)
+        edges = cv2.Canny(gray, 50, 150)
+        contours_edges, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        for contour in contours_edges:
+            area = cv2.contourArea(contour)
+            if 300 < area < 4000:
+                x, y, w, h = cv2.boundingRect(contour)
+                aspect_ratio = max(w, h) / max(min(w, h), 1)
+                # Tombstone: tall and narrow
+                if aspect_ratio > 3.0 and h > w:
+                    defects.append({
+                        "type": "Tombstone",
+                        "bbox": [float(x), float(y), float(x + w), float(y + h)],
+                        "confidence": 0.70,
+                        "severity": "High",
+                        "area": float(area),
+                        "detection_source": "cv_real"
+                    })
+        
+        # 5. Detect scratches/marks (linear dark features)
+        # Use HoughLines to detect linear features
+        lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=50, minLineLength=30, maxLineGap=10)
+        if lines is not None:
+            for line in lines[:5]:  # Limit to top 5
+                x1, y1, x2, y2 = line[0]
+                # Create bbox around line
+                x_min, x_max = min(x1, x2), max(x1, x2)
+                y_min, y_max = min(y1, y2), max(y1, y2)
+                w, h = x_max - x_min, y_max - y_min
+                if w > 20 or h > 20:  # Minimum size
+                    defects.append({
+                        "type": "Scratch/Mark",
+                        "bbox": [float(x_min), float(y_min), float(x_max), float(y_max)],
+                        "confidence": 0.50,  # Lower confidence (high FP risk)
+                        "severity": "Low",
+                        "area": float(w * h),
+                        "detection_source": "cv_real"
+                    })
+        
+        print(f"📊 Real CV defects detected: {len(defects)}")
         return defects
     
     def _classify_defect_type(self, label: int) -> str:

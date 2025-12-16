@@ -341,8 +341,26 @@ async def generate_sop(
         # Get annotated image filename for frontend display
         annotated_image_path = result.get("annotated_image_path", "")
         annotated_image_filename = ""
+        
         if annotated_image_path:
-            annotated_image_filename = os.path.basename(annotated_image_path)
+            # Check if file exists
+            if os.path.exists(annotated_image_path):
+                annotated_image_filename = os.path.basename(annotated_image_path)
+                file_size = os.path.getsize(annotated_image_path)
+                print(f"✅ Annotated image ready: {annotated_image_filename} ({file_size} bytes)")
+            else:
+                print(f"⚠️ Annotated image path provided but file doesn't exist: {annotated_image_path}")
+                # Try to find any annotated image in the directory
+                annotated_dir = os.path.join(os.path.dirname(__file__), "outputs", "annotated")
+                if os.path.exists(annotated_dir):
+                    annotated_files = [f for f in os.listdir(annotated_dir) if f.startswith("annotated_")]
+                    if annotated_files:
+                        # Use most recent file
+                        annotated_files.sort(key=lambda x: os.path.getmtime(os.path.join(annotated_dir, x)), reverse=True)
+                        annotated_image_filename = annotated_files[0]
+                        print(f"✅ Found existing annotated image: {annotated_image_filename}")
+        else:
+            print(f"⚠️ No annotated image path in result")
         
         response_data = {
             "status": result["status"],
@@ -401,9 +419,32 @@ async def download_annotated(filename: str):
     image_path = os.path.join(os.path.dirname(__file__), "outputs", "annotated", filename)
     
     if not os.path.exists(image_path):
-        raise HTTPException(status_code=404, detail="Annotated image not found")
+        print(f"❌ Annotated image not found: {image_path}")
+        # Try to find the file with different extensions
+        base_path = os.path.splitext(image_path)[0]
+        for ext in ['.png', '.jpg', '.jpeg', '.PNG', '.JPG', '.JPEG']:
+            alt_path = base_path + ext
+            if os.path.exists(alt_path):
+                print(f"✅ Found image with extension {ext}: {alt_path}")
+                image_path = alt_path
+                break
+        else:
+            raise HTTPException(status_code=404, detail=f"Annotated image not found: {filename}")
     
-    return FileResponse(image_path, media_type="image/png")
+    # Determine media type from file extension
+    ext = os.path.splitext(image_path)[1].lower()
+    media_type_map = {
+        '.png': 'image/png',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.gif': 'image/gif',
+        '.webp': 'image/webp'
+    }
+    media_type = media_type_map.get(ext, 'image/png')
+    
+    print(f"✅ Serving annotated image: {filename} ({os.path.getsize(image_path)} bytes)")
+    
+    return FileResponse(image_path, media_type=media_type)
 
 # ==================== AOI Visual Defect Analysis Endpoints ====================
 

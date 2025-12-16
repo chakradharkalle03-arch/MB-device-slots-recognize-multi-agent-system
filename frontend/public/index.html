@@ -617,6 +617,12 @@ Upload an AOI inspection image to automatically detect defects, reduce false pos
                                 <div id="aoiDetectionResults"></div>
                             </div>
                             <div class="result-section">
+                                <h3>🖼️ Annotated AOI Image (Defect Mapping)</h3>
+                                <div id="aoiAnnotatedImageContainer" style="margin-top: 15px; text-align: center;">
+                                    <p style="color: #666;">Annotated image will appear here after analysis...</p>
+                                </div>
+                            </div>
+                            <div class="result-section">
                                 <h3>🔍 Detected Defects</h3>
                                 <div id="aoiDefects"></div>
                             </div>
@@ -971,21 +977,31 @@ Monitor equipment health, detect anomalies, and receive early warnings for poten
             
             // Display annotated motherboard image
             const annotatedImageContainer = document.getElementById('annotatedImageContainer');
-            if (annotatedImageContainer && data.annotated_image) {
-                const imageUrl = `${BACKEND_URL}/api/download-annotated/${data.annotated_image}`;
-                annotatedImageContainer.innerHTML = `
-                    <div style="background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 10px rgba(0,0,0,0.1);">
-                        <img src="${imageUrl}" 
-                             alt="Annotated Motherboard Image" 
-                             style="max-width: 100%; height: auto; border-radius: 8px; border: 2px solid #667eea;"
-                             onerror="this.parentElement.innerHTML='<p style=\\'color: #f44336;\\'>Image not available</p>'">
-                        <p style="margin-top: 15px; color: #666; font-size: 14px;">
-                            <strong>Component Mapping:</strong> All detected connectors and slots are marked with bounding boxes and labels on the motherboard image.
-                        </p>
-                    </div>
-                `;
-            } else if (annotatedImageContainer) {
-                annotatedImageContainer.innerHTML = '<p style="color: #666;">Annotated image will be available after analysis...</p>';
+            if (annotatedImageContainer) {
+                if (data.annotated_image && data.annotated_image.trim() !== '') {
+                    const imageUrl = `${BACKEND_URL}/api/download-annotated/${data.annotated_image}`;
+                    annotatedImageContainer.innerHTML = `
+                        <div style="background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 10px rgba(0,0,0,0.1);">
+                            <img src="${imageUrl}" 
+                                 alt="Annotated Motherboard Image" 
+                                 style="max-width: 100%; height: auto; border-radius: 8px; border: 2px solid #667eea; display: block; margin: 0 auto;"
+                                 onerror="console.error('Image load error:', '${imageUrl}'); this.parentElement.innerHTML='<p style=\\'color: #f44336; padding: 20px;\\'><strong>⚠️ Image Loading Error:</strong><br>URL: ${imageUrl}<br>Please check backend logs or try regenerating SOP.</p>'"
+                                 onload="console.log('Image loaded successfully:', '${imageUrl}')">
+                            <p style="margin-top: 15px; color: #666; font-size: 14px; text-align: center;">
+                                <strong>Component Mapping:</strong> All detected connectors and slots are marked with bounding boxes and labels on the motherboard image.
+                            </p>
+                        </div>
+                    `;
+                } else {
+                    annotatedImageContainer.innerHTML = `
+                        <div style="background: #fff3cd; padding: 15px; border-radius: 8px; border-left: 4px solid #ff9800;">
+                            <p style="color: #856404; margin: 0;">
+                                <strong>⚠️ Annotated image not generated.</strong><br>
+                                This may happen if no components were detected. Try uploading the image again.
+                            </p>
+                        </div>
+                    `;
+                }
             }
             
             // Display all connectors with their SOPs - Sequential Installation Guide
@@ -1273,6 +1289,38 @@ Monitor equipment health, detect anomalies, and receive early warnings for poten
                     ` : ''}
                 </div>
             `;
+
+            // Display Annotated AOI Image
+            const aoiImageContainer = document.getElementById('aoiAnnotatedImageContainer');
+            if (aoiImageContainer && data.annotated_image) {
+                // Extract filename from path if it's a full URL
+                let imageFilename = data.annotated_image;
+                if (imageFilename.includes('/')) {
+                    imageFilename = imageFilename.split('/').pop();
+                }
+                
+                const imageUrl = `${BACKEND_URL}/api/download-aoi-annotated/${imageFilename}`;
+                aoiImageContainer.innerHTML = `
+                    <div style="background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 10px rgba(0,0,0,0.1);">
+                        <img src="${imageUrl}" 
+                             alt="Annotated AOI Image" 
+                             style="max-width: 100%; height: auto; border-radius: 8px; border: 2px solid #f44336; display: block; margin: 0 auto;"
+                             onerror="console.error('AOI Image load error:', '${imageUrl}'); this.parentElement.innerHTML='<p style=\\'color: #f44336; padding: 20px;\\'><strong>⚠️ Image Loading Error:</strong><br>URL: ${imageUrl}<br>Please check backend logs or try analyzing again.</p>'"
+                             onload="console.log('AOI Image loaded successfully:', '${imageUrl}')">
+                        <p style="margin-top: 15px; color: #666; font-size: 14px; text-align: center;">
+                            <strong>Defect Mapping:</strong> All detected defects are marked with bounding boxes and labels on the AOI inspection image.
+                        </p>
+                    </div>
+                `;
+            } else if (aoiImageContainer) {
+                aoiImageContainer.innerHTML = `
+                    <div style="background: #fff3cd; padding: 15px; border-radius: 8px; border-left: 4px solid #ff9800;">
+                        <p style="color: #856404; margin: 0;">
+                            <strong>⚠️ Annotated image not available.</strong> This may happen if no defects were detected or image generation failed.
+                        </p>
+                    </div>
+                `;
+            }
 
             // Defects List
             const defectsDiv = document.getElementById('aoiDefects');

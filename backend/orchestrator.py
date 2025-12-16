@@ -131,18 +131,63 @@ class Orchestrator:
             
             # Annotate image
             base_dir = os.path.dirname(os.path.abspath(__file__))
+            os.makedirs(os.path.join(base_dir, "outputs", "annotated"), exist_ok=True)
+            
+            # Generate unique filename to avoid conflicts
+            import uuid
+            original_filename = os.path.basename(state['image_path'])
+            name, ext = os.path.splitext(original_filename)
+            annotated_filename = f"annotated_{name}_{uuid.uuid4().hex[:8]}{ext}"
             annotated_path = os.path.join(
                 base_dir,
                 "outputs",
                 "annotated",
-                f"annotated_{os.path.basename(state['image_path'])}"
+                annotated_filename
             )
-            self.vision_agent.annotate_image(
-                state["image_path"],
-                state["components"],
-                annotated_path
-            )
-            state["annotated_image_path"] = annotated_path
+            
+            print(f"📸 Generating annotated image: {annotated_path}")
+            print(f"📊 Components to annotate: {len(state['components'])}")
+            
+            # ALWAYS generate annotated image (even if no components detected)
+            try:
+                annotated_result_path = self.vision_agent.annotate_image(
+                    state["image_path"],
+                    state["components"],
+                    annotated_path
+                )
+                
+                # Verify image was actually created
+                if annotated_result_path and os.path.exists(annotated_result_path):
+                    state["annotated_image_path"] = annotated_result_path
+                    file_size = os.path.getsize(annotated_result_path)
+                    print(f"✅ Annotated image created successfully: {annotated_result_path} ({file_size} bytes)")
+                else:
+                    # Fallback: Copy original image if annotation failed
+                    print(f"⚠️ Annotation returned path but file doesn't exist, copying original image")
+                    import shutil
+                    shutil.copy2(state["image_path"], annotated_path)
+                    if os.path.exists(annotated_path):
+                        state["annotated_image_path"] = annotated_path
+                        print(f"✅ Original image copied as annotated image: {annotated_path}")
+                    else:
+                        print(f"❌ Failed to copy original image")
+                        state["annotated_image_path"] = annotated_path  # Set anyway for frontend
+            except Exception as e:
+                print(f"❌ Error annotating image: {e}")
+                import traceback
+                traceback.print_exc()
+                # Fallback: Copy original image
+                try:
+                    import shutil
+                    shutil.copy2(state["image_path"], annotated_path)
+                    if os.path.exists(annotated_path):
+                        state["annotated_image_path"] = annotated_path
+                        print(f"✅ Fallback: Original image copied as annotated image")
+                    else:
+                        state["annotated_image_path"] = annotated_path  # Set anyway
+                except Exception as e2:
+                    print(f"❌ Fallback copy also failed: {e2}")
+                    state["annotated_image_path"] = annotated_path  # Set anyway for frontend
             
             return state
         except Exception as e:
@@ -175,10 +220,20 @@ class Orchestrator:
             )
             state["target_component"] = result.get("target_component", {})
             
-            # Enrich ALL components for display
+            # Enrich ONLY REAL components for display (NO rule-based fallbacks)
+            # Filter to only real detections from actual image analysis
+            real_components = [
+                comp for comp in state["components"]
+                if comp.get("detection_source") in ["real", "cv_real", "detr_real"]
+                and comp.get("detection_source") != "rule_based"
+            ]
+            
+            print(f"📊 Enriching {len(real_components)} REAL components (rule-based excluded)")
+            
             all_enriched = []
-            for comp in state["components"]:
+            for comp in real_components:
                 enriched = self.knowledge_agent.enrich_component(comp.copy())
+                enriched["detection_source"] = comp.get("detection_source", "real")  # Preserve detection source
                 all_enriched.append(enriched)
             state["all_components_enriched"] = all_enriched
             
